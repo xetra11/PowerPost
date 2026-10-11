@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -49,6 +50,8 @@ type TargetView struct {
 type PostView struct {
 	store.Post
 	Asset         *AssetView                 `json:"asset"`
+	CoverURL      string                     `json:"coverUrl"`      // cover preview (video frame or custom image)
+	CoverFrameURL string                     `json:"coverFrameUrl"` // video frame at coverMs
 	Targets       []TargetView               `json:"targets"`
 	Issues        []platform.ValidationIssue `json:"issues"`
 	Ready         bool                       `json:"ready"`         // can be approved
@@ -123,6 +126,8 @@ func (a *App) buildView(ctx context.Context, p store.Post) (PostView, error) {
 	}
 
 	v.ContentHash = contentHash(p, v.Targets)
+	v.CoverURL = coverURL(p, v.Targets)
+	v.CoverFrameURL = coverFrameURL(p, v.Targets)
 	contentErrors := slices.ContainsFunc(v.Issues, func(i platform.ValidationIssue) bool {
 		return i.Severity == platform.SeverityError && i.Scope == platform.ScopeContent
 	})
@@ -213,6 +218,12 @@ func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.P
 				add(platform.SeverityWarning, platform.ScopeContent, "AUTO_FIXED", "Adjusted automatically", fix)
 			}
 		}
+		if p.CoverCustom && id == "tiktok" {
+			add(platform.SeverityInfo, platform.ScopeContent, "COVER_FRAME_ONLY", fmt.Sprintf("TikTok can't use a custom cover image via the API; it uses the video frame at %.1f s.", float64(p.CoverMs)/1000), "")
+		}
+		if p.CoverCustom && id == "instagram" && a.Cfg.PublicBaseURL == "" {
+			add(platform.SeverityWarning, platform.ScopeContent, "COVER_NEEDS_TUNNEL", fmt.Sprintf("Custom cover images need the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL); without it Instagram uses the frame at %.1f s.", float64(p.CoverMs)/1000), "")
+		}
 		if p.CoverMs > 0 && float64(p.CoverMs)/1000 > asset.Info.Duration {
 			add(platform.SeverityWarning, platform.ScopeContent, "COVER_OUT_OF_RANGE", "Cover time is after the end of the video; the first frame will be used.", "")
 		}
@@ -225,6 +236,9 @@ func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.P
 
 func (a *App) resolve(p store.Post, tv TargetView) platform.ResolvedTarget {
 	rt := platform.ResolvedTarget{PostID: p.ID, Kind: platform.PostKind(p.Kind), Caption: tv.FinalCaption, Options: tv.Options, CoverMs: p.CoverMs}
+	if p.CoverCustom {
+		rt.CoverImagePath = p.CoverPath
+	}
 	if tv.Rendition != nil {
 		rt.FilePath = tv.Rendition.Path
 		if tv.Rendition.Info != nil {
@@ -260,11 +274,16 @@ func contentHash(p store.Post, targets []TargetView) string {
 		}
 		return 1
 	})
+	cover := ""
+	if p.CoverCustom {
+		cover = filepath.Base(p.CoverPath) // new upload = new file name
+	}
 	b, _ := json.Marshal(struct {
 		Kind    string `json:"kind"`
 		CoverMs int64  `json:"coverMs"`
+		Cover   string `json:"cover"`
 		Parts   []part `json:"parts"`
-	}{p.Kind, p.CoverMs, parts})
+	}{p.Kind, p.CoverMs, cover, parts})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }

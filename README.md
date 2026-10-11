@@ -113,9 +113,10 @@ The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip thos
    | Slow-start MP4 | Moves the index to the front (`+faststart`) |
    | Too long | **Error**: trim the video yourself, PowerPoster won't cut your content |
 
-3. **Review.** Phone-sized previews play the converted files, with an optional safe-zone overlay. You see the final caption for each platform, every automatic fix, and any remaining problems.
-4. **Approve.** This locks in the content. Any change afterwards (caption, options, video) sends the post back to draft. The internal title doesn't count.
-5. **Publish.** Uploads run in the background. Each platform shows its progress, the link to the live post, or an error with a **Retry** button.
+3. **Pick a cover.** Choose a frame of the video (used by Instagram and TikTok), or upload an image. Instagram uses the image (needs the tunnel); TikTok's API only accepts a video frame.
+4. **Review.** Phone-sized previews play the converted files, with an optional safe-zone overlay. You see the final caption for each platform, every automatic fix, and any remaining problems.
+5. **Approve.** This locks in the content. Any change afterwards (caption, options, video) sends the post back to draft. The internal title doesn't count.
+6. **Publish** each platform on its own card, or all at once. Uploads run in the background. Each platform shows its progress, the link to the live post, or an error with a **Retry** button. If you delete an Instagram post in the app, the review page notices it (status *Removed*); you can then edit the post and publish it again.
 
 ---
 

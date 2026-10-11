@@ -61,13 +61,15 @@ type Constraints struct {
 
 // ResolvedTarget is a post as one platform will receive it.
 type ResolvedTarget struct {
-	PostID   int64           `json:"postId"`
-	Kind     PostKind        `json:"kind"`
-	Caption  string          `json:"caption"` // final text incl. hashtags
-	Options  json.RawMessage `json:"options"`
-	CoverMs  int64           `json:"coverMs"`
-	FilePath string          `json:"-"` // the rendition that gets uploaded
-	File     media.Info      `json:"file"`
+	PostID  int64           `json:"postId"`
+	Kind    PostKind        `json:"kind"`
+	Caption string          `json:"caption"` // final text incl. hashtags
+	Options json.RawMessage `json:"options"`
+	CoverMs int64           `json:"coverMs"`
+	// CoverImagePath is an uploaded cover image (JPEG 1080x1920), if any.
+	CoverImagePath string     `json:"-"`
+	FilePath       string     `json:"-"` // the rendition that gets uploaded
+	File           media.Info `json:"file"`
 }
 
 type TokenSet struct {
@@ -157,4 +159,10 @@ type TokenImporter interface {
 // http://localhost OAuth redirect (e.g. TikTok desktop apps), so no tunnel is needed.
 type LocalRedirector interface {
 	AllowsLocalRedirect() bool
+}
+
+// LiveChecker is optionally implemented by platforms that can tell whether a
+// published post still exists (e.g. it was deleted in the app).
+type LiveChecker interface {
+	IsLive(ctx context.Context, token TokenSet, remoteID string) (bool, error)
 }

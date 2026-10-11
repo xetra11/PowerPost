@@ -175,3 +175,22 @@ dl.options dd { margin: 0; text-align: right; }
 .card-publish { margin: 0.75rem 0; }
 .card-publish button { width: 100%; margin: 0; }
 .card-publish .issues { margin-top: 0.35rem; }
+.cover-box { display: flex; gap: 1rem; align-items: flex-start; margin-top: 0.5rem; }
+.cover-thumb { width: 90px; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 8px; background: #000; flex-shrink: 0; }
+.cover-controls { display: flex; flex-direction: column; gap: 0.35rem; }
+.cover-controls .actions button, .cover-controls .actions label { margin: 0; }
+.button-like { display: inline-block; cursor: pointer; border: 1px solid var(--pico-primary); color: var(--pico-primary);
+  border-radius: var(--pico-border-radius); padding: 0.25rem 0.6rem; font-size: 0.85rem; }
+.button-like.disabled { opacity: 0.5; pointer-events: none; }
+.cover-mini { display: flex; align-items: center; gap: 0.5rem; justify-content: center; margin: 0.25rem 0 0.75rem; font-size: 0.85rem; }
+.cover-mini img { width: 36px; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 4px; }
+.cover-picker { display: flex; gap: 1rem; align-items: flex-start; margin-top: 0.75rem; }
+.cover-stage { position: relative; flex-shrink: 0; }
+.cover-video { width: 120px; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 8px; background: #000; display: block; }
+.cover-custom-badge { position: absolute; right: -10px; bottom: -10px; width: 44px; aspect-ratio: 9 / 16; object-fit: cover;
+  border-radius: 5px; border: 2px solid var(--pico-primary); }
+.cover-picker .cover-controls { flex: 1; min-width: 0; }
+.cover-picker input[type="range"] { margin: 0.25rem 0; }
+.cover-picker .cover-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.cover-picker .cover-row button { margin: 0; width: auto; padding: 0.15rem 0.6rem; }
+.cover-time { font-variant-numeric: tabular-nums; font-size: 0.9rem; }

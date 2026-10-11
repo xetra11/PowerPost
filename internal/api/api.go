@@ -46,6 +46,10 @@ func (s *Server) PrivateHandler() http.Handler {
 	mux.HandleFunc("POST /api/posts/{id}/unapprove", s.unapprove)
 	mux.HandleFunc("POST /api/posts/{id}/publish", s.publish)
 	mux.HandleFunc("GET /api/posts/{id}/attempts", s.attempts)
+	mux.HandleFunc("POST /api/posts/{id}/check-live", s.checkLive)
+	mux.HandleFunc("POST /api/posts/{id}/duplicate", s.duplicate)
+	mux.HandleFunc("POST /api/posts/{id}/cover", s.uploadCover)
+	mux.HandleFunc("DELETE /api/posts/{id}/cover", s.clearCover)
 	mux.HandleFunc("GET /api/platforms", s.platforms)
 	mux.HandleFunc("GET /api/platforms/{platform}/account-info", s.accountInfo)
 	mux.HandleFunc("POST /api/connections/{platform}/start", s.startConnect)
@@ -267,7 +271,69 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, st, err)
 }
 
+func (s *Server) duplicate(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	v, err := s.App.DuplicatePost(r.Context(), id)
+	s.respondStatus(w, http.StatusCreated, v, err)
+}
+
+func (s *Server) checkLive(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	v, err := s.App.CheckLive(r.Context(), id)
+	s.respond(w, v, err)
+}
+
+// uploadCover streams a multipart "file" image and sets it as custom cover.
+func (s *Server) uploadCover(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	mr, err := r.MultipartReader()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "expected multipart/form-data with a \"file\" field")
+		return
+	}
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "missing \"file\" field")
+			return
+		}
+		if part.FormName() == "file" {
+			v, err := s.App.SetCoverImage(r.Context(), id, io.LimitReader(part, 20<<20), part.FileName())
+			s.respond(w, v, err)
+			return
+		}
+	}
+}
+
+func (s *Server) clearCover(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	v, err := s.App.ClearCoverImage(r.Context(), id)
+	s.respond(w, v, err)
+}
+
 func (s *Server) media(w http.ResponseWriter, r *http.Request) {
+	if r.PathValue("kind") == "covers" {
+		p, err := s.App.CoverFile(r.Context(), r.PathValue("name"))
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		http.ServeFile(w, r, p)
+		return
+	}
 	p, ok := s.App.MediaFile(r.PathValue("kind"), r.PathValue("name"))
 	if !ok {
 		http.NotFound(w, r)

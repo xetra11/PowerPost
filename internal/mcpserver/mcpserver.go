@@ -10,6 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -39,6 +42,8 @@ func New(a *app.App) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "create_post", Description: "Create a draft post. Hashtags default to the brand's default hashtags; platforms default to the user's default platforms."}, t.createPost)
 	mcp.AddTool(s, &mcp.Tool{Name: "attach_media", Description: "Attach a video file to a post (replaces any existing video). The path must be inside the PowerPoster inbox folder. Conversion for each platform starts automatically."}, t.attachMedia)
 	mcp.AddTool(s, &mcp.Tool{Name: "upload_media", Description: "Attach a small video (max 50 MB) by sending its content as base64. Prefer attach_media for files in the inbox."}, t.uploadMedia)
+	mcp.AddTool(s, &mcp.Tool{Name: "set_cover_image", Description: "Use an image from the inbox folder as custom cover (Instagram; converted to 1080x1920). TikTok always uses the video frame at cover_ms. Pass an empty path to go back to the video frame."}, t.setCover)
+	mcp.AddTool(s, &mcp.Tool{Name: "duplicate_post", Description: "Copy a post (text, options, cover, video incl. conversions) into a new draft. Only platforms not yet live on the original are enabled. Use it to re-post or change a post that was already (partly) published."}, t.duplicatePost)
 	mcp.AddTool(s, &mcp.Tool{Name: "update_post", Description: "Edit a draft: title, caption, hashtags, aspect strategy (blur|crop|pad) or cover frame time. Any change after approval sends the post back to draft."}, t.updatePost)
 	mcp.AddTool(s, &mcp.Tool{Name: "set_target_options", Description: "Per-platform settings: enable/disable a platform, caption or hashtag overrides, and platform options (see the options schema in list_platforms)."}, t.setTarget)
 	mcp.AddTool(s, &mcp.Tool{Name: "validate_post", Description: "Validation result per platform: errors, warnings (incl. automatic fixes like downscaling), conversion progress, and whether the post is ready for review."}, t.validatePost)
@@ -111,6 +116,11 @@ type uploadIn struct {
 	PostID        int64  `json:"post_id" jsonschema:"the post id"`
 	Filename      string `json:"filename" jsonschema:"file name including extension, e.g. reel.mp4"`
 	ContentBase64 string `json:"content_base64" jsonschema:"file content, base64 encoded"`
+}
+
+type coverIn struct {
+	PostID int64  `json:"post_id" jsonschema:"the post id"`
+	Path   string `json:"path" jsonschema:"absolute path of the image inside the inbox folder; empty to use the video frame"`
 }
 
 type updatePostIn struct {
@@ -210,6 +220,26 @@ func (t tools) uploadMedia(ctx context.Context, _ *mcp.CallToolRequest, in uploa
 	}
 	v, err := t.a.AttachUpload(ctx, in.PostID, bytes.NewReader(data), in.Filename)
 	return post(v, err)
+}
+
+func (t tools) setCover(ctx context.Context, _ *mcp.CallToolRequest, in coverIn) (*mcp.CallToolResult, any, error) {
+	if strings.TrimSpace(in.Path) == "" {
+		return post(t.a.ClearCoverImage(ctx, in.PostID))
+	}
+	local, err := t.a.ResolveInboxPath(in.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	f, err := os.Open(local)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer f.Close()
+	return post(t.a.SetCoverImage(ctx, in.PostID, f, filepath.Base(local)))
+}
+
+func (t tools) duplicatePost(ctx context.Context, _ *mcp.CallToolRequest, in postIn) (*mcp.CallToolResult, any, error) {
+	return post(t.a.DuplicatePost(ctx, in.PostID))
 }
 
 func (t tools) updatePost(ctx context.Context, _ *mcp.CallToolRequest, in updatePostIn) (*mcp.CallToolResult, any, error) {

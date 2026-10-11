@@ -280,3 +280,45 @@ func targetBlockers(t TargetView) string {
 	}
 	return strings.Join(msgs, " ")
 }
+
+// CheckLive asks the platforms whether published posts still exist. Targets
+// deleted in the app are marked "removed" and can be published again.
+func (a *App) CheckLive(ctx context.Context, id int64) (PostView, error) {
+	v, err := a.GetPost(ctx, id)
+	if err != nil {
+		return v, err
+	}
+	changed := false
+	for _, t := range v.Targets {
+		if t.Status != "published" || t.RemoteID == "" {
+			continue
+		}
+		ad, ok := a.Registry.Get(platform.ID(t.Platform))
+		checker, can := ad.(platform.LiveChecker)
+		if !ok || !can {
+			continue
+		}
+		token, err := a.token(ctx, ad)
+		if err != nil {
+			return v, err
+		}
+		live, err := checker.IsLive(ctx, token, t.RemoteID)
+		if err != nil {
+			return v, fmt.Errorf("%s: %w", ad.DisplayName(), err)
+		}
+		if !live {
+			note := fmt.Sprintf("Deleted on %s. You can change the post and publish it again.", ad.DisplayName())
+			if err := a.Store.SetTargetState(ctx, t.ID, store.TargetState{Status: "removed", RemoteID: t.RemoteID, Note: note}); err != nil {
+				return v, err
+			}
+			changed = true
+		}
+	}
+	if !changed {
+		return v, nil
+	}
+	if err := a.updatePostStatus(ctx, id); err != nil {
+		return v, err
+	}
+	return a.GetPost(ctx, id)
+}

@@ -33,6 +33,7 @@ type FakeAdapter struct {
 	mu        sync.Mutex
 	Published []platform.ResolvedTarget
 	Fail      error
+	deleted   bool
 }
 
 func (f *FakeAdapter) ID() platform.ID     { return platform.ID(f.Name) }
@@ -221,4 +222,28 @@ func WaitReady(t *testing.T, a *app.App, id int64) app.PostView {
 		return true
 	})
 	return v
+}
+
+// IsLive implements platform.LiveChecker; SetDeleted simulates deleting the post in the app.
+func (f *FakeAdapter) IsLive(context.Context, platform.TokenSet, string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.deleted, nil
+}
+
+func (f *FakeAdapter) SetDeleted(v bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deleted = v
+}
+
+// MakeImage writes a test PNG into the app's inbox and returns its local path.
+func MakeImage(t *testing.T, a *app.App, name string) string {
+	t.Helper()
+	out := filepath.Join(a.Cfg.InboxDir, name)
+	cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720", "-frames:v", "1", out)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("make image: %v %s", err, b)
+	}
+	return out
 }

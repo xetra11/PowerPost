@@ -123,3 +123,23 @@ func (t *tailBuffer) String() string {
 	defer t.mu.Unlock()
 	return t.buf.String()
 }
+
+// Frame writes the video frame at sec as a 540 px wide JPEG (cover preview).
+func (r Runner) Frame(ctx context.Context, in, out string, sec float64) error {
+	return r.image(ctx, []string{"-ss", fmt.Sprintf("%.3f", sec), "-i", in, "-frames:v", "1", "-vf", "scale=540:-2"}, out)
+}
+
+// CoverImage converts any image to a 1080x1920 JPEG (center-cropped), the
+// format Instagram expects for a Reels cover.
+func (r Runner) CoverImage(ctx context.Context, in, out string) error {
+	return r.image(ctx, []string{"-i", in, "-frames:v", "1", "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1"}, out)
+}
+
+func (r Runner) image(ctx context.Context, args []string, out string) error {
+	full := append([]string{"-hide_banner", "-nostdin", "-y"}, args...)
+	full = append(full, "-q:v", "3", out)
+	if b, err := exec.CommandContext(ctx, r.FFmpeg, full...).CombinedOutput(); err != nil {
+		return fmt.Errorf("image conversion failed: %s", lastLines(string(b), 3))
+	}
+	return nil
+}

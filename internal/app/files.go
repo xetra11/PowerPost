@@ -95,7 +95,7 @@ func mergeOptions(schemaRaw, current, patch json.RawMessage) (json.RawMessage, e
 	return json.Marshal(cur)
 }
 
-// PublicMediaURL returns a signed, expiring link to a rendition, served by the
+// PublicMediaURL returns a signed, expiring link to a rendition or cover image, served by the
 // public listener through the tunnel. Platforms like Instagram fetch videos
 // from such links. ok is false when no tunnel (PUBLIC_BASE_URL) is configured.
 func (a *App) PublicMediaURL(path string, ttl time.Duration) (string, bool) {
@@ -128,9 +128,11 @@ func (a *App) ResolvePublicMedia(token string) (string, bool) {
 	if name != filepath.Base(name) || name == "" || name[0] == '.' {
 		return "", false
 	}
-	p := filepath.Join(a.renditionsDir(), name)
-	if _, err := os.Stat(p); err != nil {
-		return "", false
+	for _, dir := range []string{a.renditionsDir(), a.coversDir()} {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p, true
+		}
 	}
-	return p, true
+	return "", false
 }

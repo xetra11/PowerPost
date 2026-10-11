@@ -51,6 +51,15 @@ export default function ReviewPage() {
     api.attempts(id).then(setAttempts).catch(() => {})
   }, [id, status])
 
+  // Once per visit: ask the platforms whether published posts still exist.
+  const [liveChecked, setLiveChecked] = useState(false)
+  const hasPublished = !!post?.targets.some((t) => t.status === 'published')
+  useEffect(() => {
+    if (!hasPublished || liveChecked) return
+    setLiveChecked(true)
+    api.checkLive(id).then(setPost).catch(() => {})
+  }, [hasPublished, liveChecked, id, setPost])
+
   if (!post) return loadError ? <ErrorBanner error={loadError} /> : <p aria-busy="true">Loading…</p>
 
   const act = async (fn: () => Promise<Post>) => {
@@ -111,6 +120,7 @@ export default function ReviewPage() {
             mode={mode}
             handle={handles[t.platform]}
             approved={post.approvalValid}
+            onCheckLive={() => act(() => api.checkLive(id))}
             onPublish={t.canPublish ? () => publish([t.platform]) : undefined}
           />
         ))}
@@ -187,6 +197,7 @@ function ReviewCard({
   handle,
   approved,
   onPublish,
+  onCheckLive,
 }: {
   post: Post
   target: Target
@@ -195,6 +206,7 @@ function ReviewCard({
   handle?: string
   approved: boolean
   onPublish?: () => void
+  onCheckLive: () => void
 }) {
   const r = t.rendition
   const options = platform ? Object.entries(platform.optionsSchema.properties) : []
@@ -216,6 +228,14 @@ function ReviewCard({
         mode={mode}
       />
       {r?.info && <small className="muted">{describeMedia(r.info)}</small>}
+      {(t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl) && (
+        <div className="cover-mini">
+          <img src={t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl} alt="" />
+          <span className="muted">
+            Cover: {t.platform === 'instagram' && post.coverCustom ? 'custom image' : `frame at ${(post.coverMs / 1000).toFixed(1)} s`}
+          </span>
+        </div>
+      )}
 
       {(t.status === 'queued' || t.status === 'publishing') && <p aria-busy="true">{t.stage || 'Waiting…'}</p>}
       {t.status === 'published' && (
@@ -228,14 +248,18 @@ function ReviewCard({
             'Done.'
           )}
           {t.note && <p>{t.note}</p>}
+          <button className="small secondary outline" onClick={onCheckLive}>
+            Check if still online
+          </button>
         </div>
       )}
+      {t.status === 'removed' && <div className="banner banner-info">{t.note || 'This post was deleted on the platform.'}</div>}
       {t.status === 'failed' && (
         <div className="banner banner-error">
           {t.error}
         </div>
       )}
-      {approved && (t.status === 'idle' || t.status === 'failed') && (
+      {approved && (t.status === 'idle' || t.status === 'failed' || t.status === 'removed') && (
         <div className="card-publish">
           {onPublish ? (
             <button onClick={onPublish}>{t.status === 'failed' ? `Retry ${t.displayName}` : `Publish to ${t.displayName}`}</button>

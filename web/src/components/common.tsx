@@ -10,6 +10,7 @@ const statusLabels: Record<string, string> = {
   failed: 'Failed',
   idle: 'Not published',
   queued: 'Queued',
+  removed: 'Removed',
 }
 
 export function StatusBadge({ status }: { status: PostStatus | TargetStatus }) {
@@ -21,6 +22,7 @@ export function targetSummary(t: Target): { icon: string; text: string; tone: 'o
   if (t.status === 'published') return { icon: '✓', text: 'Published', tone: 'ok' }
   if (t.status === 'queued' || t.status === 'publishing') return { icon: '↻', text: t.stage || 'Publishing', tone: 'busy' }
   if (t.status === 'failed') return { icon: '✗', text: 'Publish failed', tone: 'error' }
+  if (t.status === 'removed') return { icon: '!', text: 'Removed on platform', tone: 'warn' }
   const r = t.rendition
   if (r && (r.status === 'pending' || r.status === 'processing')) return { icon: '↻', text: `Converting ${Math.round(r.progress * 100)}%`, tone: 'busy' }
   const errors = t.issues.filter((i) => i.severity === 'error')

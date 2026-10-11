@@ -51,6 +51,9 @@ func fakeGraph(t *testing.T, containerStatus func(poll int) string) (*httptest.S
 	mux.HandleFunc("POST /v23.0/17841/media", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, fmt.Sprintf("create %s %s feed=%s thumb=%s token=%s", r.FormValue("media_type"), r.FormValue("upload_type"),
 			r.FormValue("share_to_feed"), r.FormValue("thumb_offset"), r.FormValue("access_token")))
+		if v := r.FormValue("cover_url"); v != "" {
+			calls = append(calls, "cover_url "+v)
+		}
 		if v := r.FormValue("video_url"); v != "" {
 			calls = append(calls, "video_url "+v)
 		}
@@ -72,6 +75,9 @@ func fakeGraph(t *testing.T, containerStatus func(poll int) string) (*httptest.S
 	mux.HandleFunc("POST /v23.0/17841/media_publish", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, "publish "+r.FormValue("creation_id"))
 		ok(w, map[string]any{"id": "M1"})
+	})
+	mux.HandleFunc("GET /v23.0/GONE", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"Unsupported get request. Object with ID 'GONE' does not exist","type":"GraphMethodException","code":100,"error_subcode":33}}`, 400)
 	})
 	mux.HandleFunc("GET /v23.0/M1", func(w http.ResponseWriter, r *http.Request) {
 		ok(w, map[string]any{"permalink": "https://www.instagram.com/reel/abc/"})
@@ -183,5 +189,28 @@ func TestPublishReelViaPublicURL(t *testing.T) {
 	got := strings.Join(*calls, "\n")
 	if !strings.Contains(got, "create REELS  feed=false") || !strings.Contains(got, "video_url https://tunnel.example/public-media/abc") || strings.Contains(got, "upload ") {
 		t.Fatalf("calls:\n%s", got)
+	}
+}
+
+func TestCoverURLAndIsLive(t *testing.T) {
+	srv, calls := fakeGraph(t, func(int) string { return "FINISHED" })
+	a := newTestAdapter(srv.URL)
+	pc := testContext()
+	pc.PublicURL = func(p string) (string, bool) { return "https://tunnel.example/public-media/" + filepath.Base(p), true }
+	tg := testTarget(t)
+	tg.CoverImagePath = filepath.Join(t.TempDir(), "cover.jpg")
+	if _, err := a.Publish(context.Background(), pc, tg); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(*calls, "\n")
+	if !strings.Contains(got, "cover_url https://tunnel.example/public-media/cover.jpg") || !strings.Contains(got, "thumb=") || strings.Contains(got, "thumb=1500") {
+		t.Fatalf("custom cover must replace thumb_offset:\n%s", got)
+	}
+
+	if live, err := a.IsLive(context.Background(), platform.TokenSet{AccessToken: "tok"}, "M1"); err != nil || !live {
+		t.Fatalf("M1: %v %v", live, err)
+	}
+	if live, err := a.IsLive(context.Background(), platform.TokenSet{AccessToken: "tok"}, "GONE"); err != nil || live {
+		t.Fatalf("GONE: %v %v", live, err)
 	}
 }

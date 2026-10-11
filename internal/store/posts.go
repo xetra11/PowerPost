@@ -18,6 +18,8 @@ type Post struct {
 	Hashtags       []string  `json:"hashtags"`
 	AspectStrategy string    `json:"aspectStrategy"`
 	CoverMs        int64     `json:"coverMs"`
+	CoverPath      string    `json:"-"`           // JPEG shown as cover (frame or custom image)
+	CoverCustom    bool      `json:"coverCustom"` // CoverPath is an uploaded image, not a video frame
 	Status         string    `json:"status"`
 	ApprovedHash   string    `json:"-"`
 	CreatedBy      string    `json:"createdBy"`
@@ -25,12 +27,12 @@ type Post struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
-const postCols = `id, title, kind, caption, hashtags, aspect_strategy, cover_ms, status, approved_hash, created_by, created_at, updated_at`
+const postCols = `id, title, kind, caption, hashtags, aspect_strategy, cover_ms, cover_path, cover_custom, status, approved_hash, created_by, created_at, updated_at`
 
 func scanPost(row interface{ Scan(...any) error }) (Post, error) {
 	var p Post
 	var tags, created, updated string
-	err := row.Scan(&p.ID, &p.Title, &p.Kind, &p.Caption, &tags, &p.AspectStrategy, &p.CoverMs, &p.Status, &p.ApprovedHash, &p.CreatedBy, &created, &updated)
+	err := row.Scan(&p.ID, &p.Title, &p.Kind, &p.Caption, &tags, &p.AspectStrategy, &p.CoverMs, &p.CoverPath, &p.CoverCustom, &p.Status, &p.ApprovedHash, &p.CreatedBy, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
@@ -50,9 +52,9 @@ func (s *Store) CreatePost(ctx context.Context, p *Post) error {
 	if p.Hashtags == nil {
 		p.Hashtags = []string{}
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO posts (title, kind, caption, hashtags, aspect_strategy, cover_ms, status, approved_hash, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Title, p.Kind, p.Caption, mustJSON(p.Hashtags), p.AspectStrategy, p.CoverMs, p.Status, p.ApprovedHash, p.CreatedBy, ts, ts)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO posts (title, kind, caption, hashtags, aspect_strategy, cover_ms, cover_path, cover_custom, status, approved_hash, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Title, p.Kind, p.Caption, mustJSON(p.Hashtags), p.AspectStrategy, p.CoverMs, p.CoverPath, p.CoverCustom, p.Status, p.ApprovedHash, p.CreatedBy, ts, ts)
 	if err != nil {
 		return err
 	}
@@ -91,9 +93,9 @@ func (s *Store) ListPosts(ctx context.Context, status string) ([]Post, error) {
 
 func (s *Store) UpdatePost(ctx context.Context, p *Post) error {
 	ts := now()
-	_, err := s.db.ExecContext(ctx, `UPDATE posts SET title = ?, kind = ?, caption = ?, hashtags = ?, aspect_strategy = ?, cover_ms = ?,
+	_, err := s.db.ExecContext(ctx, `UPDATE posts SET title = ?, kind = ?, caption = ?, hashtags = ?, aspect_strategy = ?, cover_ms = ?, cover_path = ?, cover_custom = ?,
 		status = ?, approved_hash = ?, updated_at = ? WHERE id = ?`,
-		p.Title, p.Kind, p.Caption, mustJSON(p.Hashtags), p.AspectStrategy, p.CoverMs, p.Status, p.ApprovedHash, ts, p.ID)
+		p.Title, p.Kind, p.Caption, mustJSON(p.Hashtags), p.AspectStrategy, p.CoverMs, p.CoverPath, p.CoverCustom, p.Status, p.ApprovedHash, ts, p.ID)
 	p.UpdatedAt = parseTime(ts)
 	return err
 }

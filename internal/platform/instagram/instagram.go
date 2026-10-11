@@ -4,6 +4,7 @@ package instagram
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -247,7 +248,15 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	} else {
 		form.Set("upload_type", "resumable")
 	}
-	if t.CoverMs > 0 {
+	// Cover: an uploaded image (needs a public link) or a frame of the video.
+	coverSet := false
+	if t.CoverImagePath != "" && pc.PublicURL != nil {
+		if u, ok := pc.PublicURL(t.CoverImagePath); ok {
+			form.Set("cover_url", u)
+			coverSet = true
+		}
+	}
+	if !coverSet && t.CoverMs > 0 {
 		form.Set("thumb_offset", strconv.FormatInt(t.CoverMs, 10))
 	}
 	var container struct {
@@ -416,4 +425,22 @@ func (a *Adapter) ImportToken(ctx context.Context, accessToken string) (platform
 		AccountName: me.Username,
 		Scopes:      "instagram_business_basic,instagram_business_content_publish",
 	}, nil
+}
+
+// IsLive implements platform.LiveChecker: Instagram answers "does not exist"
+// (code 100) for media that was deleted.
+func (a *Adapter) IsLive(ctx context.Context, t platform.TokenSet, remoteID string) (bool, error) {
+	var m struct {
+		ID string `json:"id"`
+	}
+	err := a.graphGet(ctx, t.AccessToken, "/"+remoteID, url.Values{"fields": {"id"}}, &m)
+	if err == nil {
+		return true, nil
+	}
+	var apiErr *platform.APIError
+	if errors.As(err, &apiErr) && apiErr.Status == 400 &&
+		(strings.Contains(apiErr.Body, "does not exist") || strings.Contains(apiErr.Message, "(code 100)")) {
+		return false, nil
+	}
+	return false, err
 }

@@ -51,7 +51,7 @@ func New(cfg config.Config, st *store.Store, reg *platform.Registry, runner medi
 
 // Init creates folders and recovers work interrupted by a previous shutdown.
 func (a *App) Init(ctx context.Context) error {
-	for _, d := range []string{a.originalsDir(), a.renditionsDir(), a.thumbsDir(), a.Cfg.InboxDir} {
+	for _, d := range []string{a.originalsDir(), a.renditionsDir(), a.thumbsDir(), a.coversDir(), a.Cfg.InboxDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return err
 		}

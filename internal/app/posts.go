@@ -303,6 +303,7 @@ func (a *App) DeletePost(ctx context.Context, id int64) error {
 			return err
 		}
 	}
+	a.removeCovers(id)
 	return a.Store.DeletePost(ctx, id)
 }
 

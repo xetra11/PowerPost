@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -329,5 +330,177 @@ func TestPublishPlatformsIndividually(t *testing.T) {
 	})
 	if _, err := a.Publish(ctx, v.ID, []string{"nope"}, false); app.KindOf(err) != app.KindInvalid {
 		t.Fatalf("unknown platform: %v", err)
+	}
+}
+
+func TestCoverImageAndFrame(t *testing.T) {
+	a := testutil.NewApp(t, &testutil.FakeAdapter{Name: "fake"})
+	ctx := context.Background()
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{Caption: "Hi"})
+	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 1080, 1920, 30, 2))
+	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitReady(t, a, v.ID)
+	v, err := a.UpdatePost(ctx, v.ID, app.PostPatch{CoverMs: ptr(int64(1200))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(v.CoverURL, "-f1200-") {
+		t.Fatalf("frame cover url %q", v.CoverURL)
+	}
+	if p, err := a.CoverFile(ctx, strings.TrimPrefix(v.CoverURL, "/media/covers/")); err != nil {
+		t.Fatalf("render frame: %v", err)
+	} else if st, err := os.Stat(p); err != nil || st.Size() == 0 {
+		t.Fatalf("frame file: %v", err)
+	}
+
+	if v, err = a.Approve(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	img, err := os.Open(testutil.MakeImage(t, a, "cover.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer img.Close()
+	if v, err = a.SetCoverImage(ctx, v.ID, img, "cover.png"); err != nil {
+		t.Fatal(err)
+	}
+	if !v.CoverCustom || !strings.Contains(v.CoverURL, "-c") || v.ApprovalValid {
+		t.Fatalf("custom cover: custom=%v url=%q approvalValid=%v", v.CoverCustom, v.CoverURL, v.ApprovalValid)
+	}
+	if u, ok := a.PublicMediaURL(v.CoverPath, time.Hour); !ok {
+		t.Fatal("no public link")
+	} else if p, ok := a.ResolvePublicMedia(u[strings.LastIndex(u, "/")+1:]); !ok || p != v.CoverPath {
+		t.Fatalf("public cover link resolves to %q", p)
+	}
+	if v, err = a.ClearCoverImage(ctx, v.ID); err != nil || v.CoverCustom || !strings.Contains(v.CoverURL, "-f1200-") {
+		t.Fatalf("clear: %v custom=%v url=%q", err, v.CoverCustom, v.CoverURL)
+	}
+	if _, err := a.SetCoverImage(ctx, v.ID, strings.NewReader("not an image"), "x.png"); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("bad image: %v", err)
+	}
+}
+
+func TestDeletedPostCanBeRepublished(t *testing.T) {
+	fake := &testutil.FakeAdapter{Name: "fake"}
+	a := testutil.NewApp(t, fake)
+	ctx := context.Background()
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{Caption: "Hi"})
+	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 1080, 1920, 30, 1.5))
+	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitReady(t, a, v.ID)
+	if _, err := a.Approve(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Publish(ctx, v.ID, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitFor(t, "published", 10*time.Second, func() bool {
+		v, _ = a.GetPost(ctx, v.ID)
+		return v.Status == app.StatusPublished
+	})
+
+	// Still online: nothing changes.
+	if v, _ = a.CheckLive(ctx, v.ID); v.Status != app.StatusPublished {
+		t.Fatalf("still live: %s", v.Status)
+	}
+
+	fake.SetDeleted(true)
+	v, err := a.CheckLive(ctx, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Targets[0].Status != "removed" || v.Status != app.StatusApproved || !v.CanPublish {
+		t.Fatalf("after delete: target=%s post=%s canPublish=%v", v.Targets[0].Status, v.Status, v.CanPublish)
+	}
+	// The post is editable again (e.g. to fix the cover); that drops the approval.
+	if v, err = a.UpdatePost(ctx, v.ID, app.PostPatch{CoverMs: ptr(int64(500))}); err != nil || v.Status != app.StatusDraft {
+		t.Fatalf("edit after removal: %v %s", err, v.Status)
+	}
+	if _, err := a.Approve(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	fake.SetDeleted(false)
+	if _, err := a.Publish(ctx, v.ID, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitFor(t, "republished", 10*time.Second, func() bool {
+		v, _ = a.GetPost(ctx, v.ID)
+		return v.Status == app.StatusPublished
+	})
+	if fake.PublishedCount() != 2 || fake.Published[1].CoverMs != 500 {
+		t.Fatalf("published %d times, cover %d", fake.PublishedCount(), fake.Published[len(fake.Published)-1].CoverMs)
+	}
+}
+
+func TestDuplicatePartlyPublishedPost(t *testing.T) {
+	ig, tt := &testutil.FakeAdapter{Name: "ig"}, &testutil.FakeAdapter{Name: "tt"}
+	a := testutil.NewApp(t, ig, tt)
+	ctx := context.Background()
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{Title: "Mood video", Caption: "Hi", Hashtags: ptr([]string{"indiegame"})})
+	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 640, 360, 30, 1.5))
+	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitReady(t, a, v.ID)
+	if _, err := a.UpdateTarget(ctx, v.ID, "ig", app.TargetPatch{CaptionOverride: ptr("IG text"), Options: json.RawMessage(`{"flag":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Approve(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Publish(ctx, v.ID, []string{"tt"}, false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitFor(t, "tt published", 10*time.Second, func() bool {
+		v, _ = a.GetPost(ctx, v.ID)
+		return v.Status == app.StatusPartial
+	})
+
+	c, err := a.DuplicatePost(ctx, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ID == v.ID || c.Title != "Mood video (copy)" || c.Status != app.StatusDraft || c.Caption != "Hi" {
+		t.Fatalf("copy: %+v", c.Post)
+	}
+	byName := map[string]app.TargetView{}
+	for _, tg := range c.Targets {
+		byName[tg.Platform] = tg
+	}
+	if !byName["ig"].Enabled || byName["tt"].Enabled {
+		t.Fatalf("only the not-yet-live platform should be enabled: ig=%v tt=%v", byName["ig"].Enabled, byName["tt"].Enabled)
+	}
+	if byName["ig"].FinalCaption != "IG text\n\n#indiegame" || string(byName["ig"].Options) != `{"flag":true}` {
+		t.Fatalf("overrides not copied: %q %s", byName["ig"].FinalCaption, byName["ig"].Options)
+	}
+	// Conversions are copied, not redone: ready immediately, own file.
+	r := byName["ig"].Rendition
+	if r == nil || r.Status != "ready" || r.URL == v.Targets[0].Rendition.URL || r.Checksum != v.Targets[0].Rendition.Checksum {
+		t.Fatalf("rendition not copied: %+v", r)
+	}
+	if !c.Ready {
+		t.Fatalf("copy should be ready to approve: %v", c.Issues)
+	}
+
+	// Deleting the original keeps the copy's files.
+	if err := a.DeletePost(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Approve(ctx, c.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Publish(ctx, c.ID, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitFor(t, "copy published", 10*time.Second, func() bool {
+		c, _ = a.GetPost(ctx, c.ID)
+		return c.Status == app.StatusPublished
+	})
+	if ig.PublishedCount() != 1 || tt.PublishedCount() != 1 {
+		t.Fatalf("ig=%d tt=%d", ig.PublishedCount(), tt.PublishedCount())
 	}
 }

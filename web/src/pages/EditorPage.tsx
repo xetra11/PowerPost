@@ -6,6 +6,7 @@ import {
   composeCaption,
   describeMedia,
   parseHashtags,
+  uploadCover,
   uploadMedia,
   type AspectStrategy,
   type Platform,
@@ -13,6 +14,7 @@ import {
   type Target,
 } from '../api'
 import { ErrorBanner, IssueList, OptionsForm, StatusBadge, targetSummary } from '../components/common'
+import { CoverPicker } from '../components/CoverPicker'
 import { usePolling } from '../usePolling'
 
 interface Draft {
@@ -127,6 +129,15 @@ export default function EditorPage() {
     }
   }
 
+  const duplicate = async () => {
+    try {
+      const copy = await api.duplicatePost(id)
+      navigate(`/posts/${copy.id}`)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   const review = async () => {
     if (dirty && !(await save())) return
     navigate(`/posts/${id}/review`)
@@ -157,7 +168,12 @@ export default function EditorPage() {
       <ErrorBanner error={error} onClose={() => setError(null)} />
       {!editable && (
         <div className="banner banner-info">
-          This post was {post.status === 'publishing' ? 'sent for publishing' : 'already published'} and can't be edited. <Link to={`/posts/${id}/review`}>Open the review page</Link>.
+          This post was {post.status === 'publishing' ? 'sent for publishing' : 'already published'} and can't be edited.{' '}
+          {post.status !== 'publishing' && (
+            <button type="button" className="small" onClick={duplicate}>
+              Duplicate to edit and post again
+            </button>
+          )}
         </div>
       )}
       {post.status === 'approved' && editable && <div className="banner banner-info">Approved. Any change sends it back to draft.</div>}
@@ -216,19 +232,13 @@ export default function EditorPage() {
           </label>
 
           {post.asset && (
-            <div className="cover-row">
-              <span>
-                Cover frame: <strong>{(post.coverMs / 1000).toFixed(1)} s</strong>
-              </span>
-              <button
-                type="button"
-                className="secondary outline small"
-                disabled={!editable}
-                onClick={() => act(() => api.updatePost(id, { coverMs: Math.round((videoRef.current?.currentTime ?? 0) * 1000) }))}
-              >
-                Use current frame
-              </button>
-            </div>
+            <CoverPicker
+              post={post}
+              disabled={!editable}
+              onPick={(ms) => act(() => api.updatePost(id, { coverMs: ms }))}
+              onUpload={(f) => act(() => uploadCover(id, f))}
+              onClearImage={() => act(() => api.clearCover(id))}
+            />
           )}
         </article>
 
@@ -339,9 +349,14 @@ export default function EditorPage() {
       })}
 
       <div className="footer-actions">
-        <button className="secondary outline" onClick={remove} disabled={post.status === 'publishing'}>
-          Delete post
-        </button>
+        <div className="actions">
+          <button className="secondary outline" onClick={remove} disabled={post.status === 'publishing'}>
+            Delete post
+          </button>
+          <button className="secondary outline" onClick={duplicate}>
+            Duplicate
+          </button>
+        </div>
         <button onClick={review}>Review &amp; approve →</button>
       </div>
     </>

@@ -39,7 +39,7 @@ export interface Rendition {
   url: string
 }
 
-export type TargetStatus = 'idle' | 'queued' | 'publishing' | 'published' | 'failed'
+export type TargetStatus = 'idle' | 'queued' | 'publishing' | 'published' | 'failed' | 'removed'
 
 export interface Target {
   id: number
@@ -76,6 +76,9 @@ export interface Post {
   hashtags: string[]
   aspectStrategy: AspectStrategy
   coverMs: number
+  coverCustom: boolean
+  coverUrl: string
+  coverFrameUrl: string
   status: PostStatus
   createdBy: 'ui' | 'mcp'
   createdAt: string
@@ -164,6 +167,9 @@ export const api = {
   approve: (id: number) => request<Post>('POST', `/api/posts/${id}/approve`, {}),
   unapprove: (id: number) => request<Post>('POST', `/api/posts/${id}/unapprove`, {}),
   publish: (id: number, platforms: string[] = []) => request<Post>('POST', `/api/posts/${id}/publish`, { platforms }),
+  duplicatePost: (id: number) => request<Post>('POST', `/api/posts/${id}/duplicate`, {}),
+  checkLive: (id: number) => request<Post>('POST', `/api/posts/${id}/check-live`, {}),
+  clearCover: (id: number) => request<Post>('DELETE', `/api/posts/${id}/cover`),
   attempts: (id: number) => request<Attempt[]>('GET', `/api/posts/${id}/attempts`),
   platforms: () => request<Platform[]>('GET', '/api/platforms'),
   accountInfo: (platform: string) => request<{ info: Record<string, unknown> | null }>('GET', `/api/platforms/${platform}/account-info`),
@@ -181,6 +187,16 @@ export interface TargetPatch {
   hashtagsOverride?: string[]
   useBaseHashtags?: boolean
   options?: Record<string, unknown>
+}
+
+/** Uploads a custom cover image. */
+export async function uploadCover(id: number, file: File): Promise<Post> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`/api/posts/${id}/cover`, { method: 'POST', body: form })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.error ?? `Upload failed (${res.status})`)
+  return data as Post
 }
 
 /** Uploads a video with progress (fetch can't report upload progress). */
