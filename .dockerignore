@@ -1,0 +1,10 @@
+.git
+.claude
+.env
+bin
+data
+inbox
+docs
+web/node_modules
+internal/webui/dist
+*.exe

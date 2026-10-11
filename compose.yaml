@@ -1,0 +1,37 @@
+# PowerPoster — `docker compose up -d --build`, then open http://127.0.0.1:4000
+name: powerposter
+
+services:
+  powerposter:
+    build: .
+    image: powerposter:local
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false # works without .env; platforms just show "not configured"
+    environment:
+      PP_BASE_URL: http://127.0.0.1:${PP_PORT:-4000}
+      # Lets Claude pass host paths (C:\...\inbox\clip.mp4); the app maps them to /inbox.
+      PP_INBOX_HOST_PATH: ${INBOX_HOST_PATH:-}
+    ports:
+      - "127.0.0.1:${PP_PORT:-4000}:4000" # UI + API + MCP, reachable from this machine only
+      # 4001 (OAuth callbacks) is intentionally not published — only the tunnel reaches it.
+    volumes:
+      - powerposter-data:/data # database, converted videos, secret key
+      - ${INBOX_HOST_PATH:-./inbox}:/inbox # drop folder shared with you and Claude
+
+  # Optional: HTTPS tunnel for OAuth callbacks. Start with `docker compose --profile tunnel up -d`.
+  # In the Cloudflare dashboard route your hostname to http://powerposter:4001
+  tunnel:
+    image: cloudflare/cloudflared:2025.9.1
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      powerposter:
+        condition: service_healthy
+
+volumes:
+  powerposter-data:

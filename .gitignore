@@ -1,0 +1,15 @@
+# runtime data
+/data/
+/inbox/*
+!/inbox/.gitkeep
+.env
+
+# build output
+/internal/webui/dist/
+/web/node_modules/
+/bin/
+*.exe
+
+# editors
+.idea/
+.vscode/

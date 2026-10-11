@@ -1,0 +1,15 @@
+# NVIDIA NVENC encoding: docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
+# Needs an NVIDIA GPU with a current driver and Docker Desktop (WSL2 backend) or the NVIDIA Container Toolkit.
+services:
+  powerposter:
+    environment:
+      FFMPEG_ENCODER: h264_nvenc
+      MAX_PARALLEL_ENCODES: "2"
+      NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]

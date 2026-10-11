@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "powerposter",
+      "runtimeExecutable": "go",
+      "runtimeArgs": ["run", "./cmd/powerposter"],
+      "port": 4000
+    }
+  ]
+}

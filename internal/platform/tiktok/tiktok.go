@@ -1,0 +1,511 @@
+// Package tiktok publishes videos via TikTok's Content Posting API.
+package tiktok
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"slices"
+	"strings"
+	"time"
+
+	"powerposter/internal/media"
+	"powerposter/internal/platform"
+)
+
+const ID platform.ID = "tiktok"
+
+const (
+	ModeInbox  = "inbox"  // upload to the creator's TikTok inbox; they finish posting in the app
+	ModeDirect = "direct" // post directly (private-only until the app passes TikTok's audit)
+)
+
+var privacyLevels = []string{"PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"}
+
+type Adapter struct {
+	ClientKey    string
+	ClientSecret string
+
+	AuthBase string // https://www.tiktok.com
+	APIBase  string // https://open.tiktokapis.com
+
+	HTTP         *http.Client
+	PollInterval time.Duration
+	PollTimeout  time.Duration
+}
+
+func New(clientKey, clientSecret string) *Adapter {
+	return &Adapter{
+		ClientKey: clientKey, ClientSecret: clientSecret,
+		AuthBase:     "https://www.tiktok.com",
+		APIBase:      "https://open.tiktokapis.com",
+		HTTP:         &http.Client{Timeout: 30 * time.Minute},
+		PollInterval: 5 * time.Second,
+		PollTimeout:  15 * time.Minute,
+	}
+}
+
+type Options struct {
+	Mode              string `json:"mode"`
+	PrivacyLevel      string `json:"privacy_level"`
+	DisableComment    bool   `json:"disable_comment"`
+	DisableDuet       bool   `json:"disable_duet"`
+	DisableStitch     bool   `json:"disable_stitch"`
+	CommercialContent bool   `json:"commercial_content"`
+	BrandOrganic      bool   `json:"brand_organic"` // "Your brand" → labelled "Promotional content"
+	BrandContent      bool   `json:"brand_content"` // "Branded content" → labelled "Paid partnership"
+	IsAIGC            bool   `json:"is_aigc"`
+}
+
+func (a *Adapter) ID() platform.ID     { return ID }
+func (a *Adapter) DisplayName() string { return "TikTok" }
+func (a *Adapter) SupportedKinds() []platform.PostKind {
+	return []platform.PostKind{platform.KindVideo}
+}
+func (a *Adapter) Configured() bool             { return a.ClientKey != "" && a.ClientSecret != "" }
+func (a *Adapter) Auth() platform.Authenticator { return a }
+
+// Constraints follow https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide.
+// The API accepts up to 4096 px, but TikTok re-encodes to ≤1080p anyway, so we
+// convert to 1080x1920 ourselves: smaller uploads and we control the quality.
+func (a *Adapter) Constraints(platform.PostKind) platform.Constraints {
+	return platform.Constraints{
+		Video: &media.VideoConstraints{
+			Containers:   []string{"mp4", "mov"},
+			VideoCodecs:  []string{"h264", "hevc"}, // the API also takes VP8/9 in WebM; we always deliver MP4
+			AudioCodecs:  []string{"aac", "mp3"},
+			MaxWidth:     4096,
+			MaxHeight:    4096,
+			TargetWidth:  1080,
+			TargetHeight: 1920,
+			FPSMin:       23,
+			FPSMax:       60,
+			DurationMin:  1,
+			DurationMax:  10 * 60, // the per-creator limit is checked at publish time
+			MaxBytes:     4 << 30,
+		},
+		Caption: platform.CaptionRules{MaxChars: 2200, CountUTF16: true},
+	}
+}
+
+func (a *Adapter) OptionsSchema() json.RawMessage {
+	return json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "mode": {
+      "type": "string",
+      "title": "Posting mode",
+      "enum": ["inbox", "direct"],
+      "x-enumLabels": {"inbox": "Send to TikTok inbox (finish in the app)", "direct": "Post directly"},
+      "description": "Direct posts are forced to private until your TikTok app passes the audit. Inbox uploads work without the audit, but the caption must be added in the TikTok app.",
+      "default": "inbox"
+    },
+    "privacy_level": {
+      "type": "string",
+      "title": "Who can view this video",
+      "enum": ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"],
+      "x-enumLabels": {"PUBLIC_TO_EVERYONE": "Everyone", "MUTUAL_FOLLOW_FRIENDS": "Friends", "FOLLOWER_OF_CREATOR": "Followers", "SELF_ONLY": "Only me"},
+      "description": "Required for direct posts. TikTok requires you to choose; there is no default."
+    },
+    "disable_comment": {"type": "boolean", "title": "Turn off comments", "default": false},
+    "disable_duet": {"type": "boolean", "title": "Turn off Duet", "default": false},
+    "disable_stitch": {"type": "boolean", "title": "Turn off Stitch", "default": false},
+    "commercial_content": {
+      "type": "boolean",
+      "title": "This video promotes a brand, product or service",
+      "description": "Required disclosure for ads. Promoting your own game counts.",
+      "default": true
+    },
+    "brand_organic": {"type": "boolean", "title": "Your brand (labelled \"Promotional content\")", "default": true},
+    "brand_content": {"type": "boolean", "title": "Branded content for a third party (labelled \"Paid partnership\")", "default": false},
+    "is_aigc": {"type": "boolean", "title": "Contains AI-generated content", "default": false}
+  }
+}`)
+}
+
+func (a *Adapter) DefaultOptions() json.RawMessage {
+	return json.RawMessage(`{"mode":"inbox","privacy_level":"","disable_comment":false,"disable_duet":false,"disable_stitch":false,"commercial_content":true,"brand_organic":true,"brand_content":false,"is_aigc":false}`)
+}
+
+func (a *Adapter) Validate(t platform.ResolvedTarget) []platform.ValidationIssue {
+	var out []platform.ValidationIssue
+	add := func(sev platform.Severity, code, msg string) {
+		out = append(out, platform.ValidationIssue{Platform: ID, Severity: sev, Scope: platform.ScopeContent, Code: code, Message: msg})
+	}
+	var o Options
+	if err := json.Unmarshal(t.Options, &o); err != nil {
+		add(platform.SeverityError, "OPTIONS_INVALID", "TikTok options are not valid: "+err.Error())
+		return out
+	}
+	switch o.Mode {
+	case ModeInbox:
+		add(platform.SeverityInfo, "INBOX_CAPTION", "Inbox mode: TikTok does not accept a caption through the API. Copy it from the review page when you finish the post in the TikTok app.")
+		return out
+	case ModeDirect:
+	default:
+		add(platform.SeverityError, "MODE_INVALID", `Posting mode must be "inbox" or "direct".`)
+		return out
+	}
+	if o.PrivacyLevel == "" {
+		add(platform.SeverityError, "PRIVACY_REQUIRED", "Choose who can view this video. TikTok requires an explicit choice.")
+	} else if !slices.Contains(privacyLevels, o.PrivacyLevel) {
+		add(platform.SeverityError, "PRIVACY_INVALID", "Unknown privacy level "+o.PrivacyLevel+".")
+	}
+	if o.CommercialContent && !o.BrandOrganic && !o.BrandContent {
+		add(platform.SeverityError, "DISCLOSURE_INCOMPLETE", `Commercial content is on: select "Your brand" and/or "Branded content".`)
+	}
+	if o.CommercialContent && o.BrandContent && o.PrivacyLevel == "SELF_ONLY" {
+		add(platform.SeverityError, "BRANDED_PRIVATE", "Branded content can't be posted with visibility \"Only me\".")
+	}
+	if o.PrivacyLevel != "" && o.PrivacyLevel != "SELF_ONLY" {
+		add(platform.SeverityInfo, "AUDIT_NOTE", "Until your TikTok app passes the audit, direct posts only work for private accounts and are visible to you only.")
+	}
+	return out
+}
+
+func (a *Adapter) ReviewNotices(raw json.RawMessage) []string {
+	var o Options
+	if json.Unmarshal(raw, &o) != nil {
+		return nil
+	}
+	if o.Mode == ModeInbox {
+		return []string{"The video will be sent to your TikTok inbox. Open TikTok, add the caption and post it there."}
+	}
+	var n []string
+	if o.CommercialContent && o.BrandContent {
+		n = append(n, "By posting, you agree to TikTok's Branded Content Policy and Music Usage Confirmation.")
+		n = append(n, `Your video will be labeled "Paid partnership".`)
+	} else {
+		n = append(n, "By posting, you agree to TikTok's Music Usage Confirmation.")
+		if o.CommercialContent && o.BrandOrganic {
+			n = append(n, `Your video will be labeled "Promotional content".`)
+		}
+	}
+	return n
+}
+
+// ---- Auth ----
+
+func (a *Adapter) AuthorizeURL(state, redirectURI string) string {
+	q := url.Values{
+		"client_key":    {a.ClientKey},
+		"response_type": {"code"},
+		"scope":         {"user.info.basic,video.publish,video.upload"},
+		"redirect_uri":  {redirectURI},
+		"state":         {state},
+	}
+	return a.AuthBase + "/v2/auth/authorize/?" + q.Encode()
+}
+
+func (a *Adapter) RefreshMargin() time.Duration { return time.Hour }
+
+type tokenResponse struct {
+	AccessToken      string `json:"access_token"`
+	ExpiresIn        int64  `json:"expires_in"`
+	OpenID           string `json:"open_id"`
+	RefreshToken     string `json:"refresh_token"`
+	RefreshExpiresIn int64  `json:"refresh_expires_in"`
+	Scope            string `json:"scope"`
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
+}
+
+func (a *Adapter) Exchange(ctx context.Context, code, redirectURI string) (platform.TokenSet, error) {
+	ts, err := a.token(ctx, url.Values{
+		"client_key":    {a.ClientKey},
+		"client_secret": {a.ClientSecret},
+		"code":          {code},
+		"grant_type":    {"authorization_code"},
+		"redirect_uri":  {redirectURI},
+	})
+	if err != nil {
+		return ts, fmt.Errorf("code exchange: %w", err)
+	}
+	var info struct {
+		User struct {
+			DisplayName string `json:"display_name"`
+		} `json:"user"`
+	}
+	if err := a.api(ctx, ts.AccessToken, http.MethodGet, "/v2/user/info/?fields=open_id,display_name", nil, &info); err != nil {
+		return ts, fmt.Errorf("read account: %w", err)
+	}
+	ts.AccountName = info.User.DisplayName
+	return ts, nil
+}
+
+func (a *Adapter) Refresh(ctx context.Context, t platform.TokenSet) (platform.TokenSet, error) {
+	ts, err := a.token(ctx, url.Values{
+		"client_key":    {a.ClientKey},
+		"client_secret": {a.ClientSecret},
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {t.RefreshToken},
+	})
+	if err != nil {
+		return t, err
+	}
+	ts.AccountName = t.AccountName
+	return ts, nil
+}
+
+func (a *Adapter) token(ctx context.Context, form url.Values) (platform.TokenSet, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, a.APIBase+"/v2/oauth/token/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	var r tokenResponse
+	if err := platform.DoJSON(a.HTTP, req, &r, oauthError); err != nil {
+		return platform.TokenSet{}, err
+	}
+	if r.AccessToken == "" {
+		return platform.TokenSet{}, fmt.Errorf("%s: %s", r.Error, r.ErrorDescription)
+	}
+	now := time.Now()
+	return platform.TokenSet{
+		AccessToken:      r.AccessToken,
+		RefreshToken:     r.RefreshToken,
+		ExpiresAt:        now.Add(time.Duration(r.ExpiresIn) * time.Second),
+		RefreshExpiresAt: now.Add(time.Duration(r.RefreshExpiresIn) * time.Second),
+		AccountID:        r.OpenID,
+		Scopes:           r.Scope,
+	}, nil
+}
+
+// ---- Creator info ----
+
+type CreatorInfo struct {
+	CreatorAvatarURL        string   `json:"creator_avatar_url"`
+	CreatorUsername         string   `json:"creator_username"`
+	CreatorNickname         string   `json:"creator_nickname"`
+	PrivacyLevelOptions     []string `json:"privacy_level_options"`
+	CommentDisabled         bool     `json:"comment_disabled"`
+	DuetDisabled            bool     `json:"duet_disabled"`
+	StitchDisabled          bool     `json:"stitch_disabled"`
+	MaxVideoPostDurationSec int      `json:"max_video_post_duration_sec"`
+}
+
+func (a *Adapter) creatorInfo(ctx context.Context, token string) (CreatorInfo, error) {
+	var ci CreatorInfo
+	err := a.api(ctx, token, http.MethodPost, "/v2/post/publish/creator_info/query/", map[string]any{}, &ci)
+	return ci, err
+}
+
+// AccountInfo implements platform.AccountInfoProvider; the UI must show the creator's nickname.
+func (a *Adapter) AccountInfo(ctx context.Context, t platform.TokenSet) (any, error) {
+	return a.creatorInfo(ctx, t.AccessToken)
+}
+
+// ---- Publish ----
+
+const (
+	chunkSize      = 10 << 20
+	maxSingleChunk = 64 << 20
+)
+
+// chunking follows TikTok's rules: files ≤64 MB go in one chunk; otherwise
+// 10 MB chunks with the remainder merged into the last one.
+func chunking(size int64) (chunk int64, count int64) {
+	if size <= maxSingleChunk {
+		return size, 1
+	}
+	return chunkSize, size / chunkSize
+}
+
+type initResponse struct {
+	PublishID string `json:"publish_id"`
+	UploadURL string `json:"upload_url"`
+}
+
+func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t platform.ResolvedTarget) (platform.PublishResult, error) {
+	var o Options
+	if err := json.Unmarshal(t.Options, &o); err != nil {
+		return platform.PublishResult{}, err
+	}
+	token := pc.Token.AccessToken
+
+	pc.Progress("checking creator info")
+	ci, err := a.creatorInfo(ctx, token)
+	if err != nil {
+		return platform.PublishResult{}, fmt.Errorf("creator info: %w", err)
+	}
+	pc.Log("posting as %s (@%s)", ci.CreatorNickname, ci.CreatorUsername)
+	if ci.MaxVideoPostDurationSec > 0 && t.File.Duration > float64(ci.MaxVideoPostDurationSec) {
+		return platform.PublishResult{}, fmt.Errorf("video is %s; this account may post at most %s", media.FormatDuration(t.File.Duration), media.FormatDuration(float64(ci.MaxVideoPostDurationSec)))
+	}
+
+	st, err := os.Stat(t.FilePath)
+	if err != nil {
+		return platform.PublishResult{}, err
+	}
+	chunk, count := chunking(st.Size())
+	source := map[string]any{"source": "FILE_UPLOAD", "video_size": st.Size(), "chunk_size": chunk, "total_chunk_count": count}
+
+	pc.Progress("initializing upload")
+	var init initResponse
+	if o.Mode == ModeInbox {
+		err = a.api(ctx, token, http.MethodPost, "/v2/post/publish/inbox/video/init/", map[string]any{"source_info": source}, &init)
+	} else {
+		if len(ci.PrivacyLevelOptions) > 0 && !slices.Contains(ci.PrivacyLevelOptions, o.PrivacyLevel) {
+			return platform.PublishResult{}, fmt.Errorf("privacy level %s is not available for this account (allowed: %s)", o.PrivacyLevel, strings.Join(ci.PrivacyLevelOptions, ", "))
+		}
+		postInfo := map[string]any{
+			"title":                    t.Caption,
+			"privacy_level":            o.PrivacyLevel,
+			"disable_comment":          o.DisableComment || ci.CommentDisabled,
+			"disable_duet":             o.DisableDuet || ci.DuetDisabled,
+			"disable_stitch":           o.DisableStitch || ci.StitchDisabled,
+			"video_cover_timestamp_ms": t.CoverMs,
+			"brand_content_toggle":     o.CommercialContent && o.BrandContent,
+			"brand_organic_toggle":     o.CommercialContent && o.BrandOrganic,
+			"is_aigc":                  o.IsAIGC,
+		}
+		err = a.api(ctx, token, http.MethodPost, "/v2/post/publish/video/init/", map[string]any{"post_info": postInfo, "source_info": source}, &init)
+	}
+	if err != nil {
+		return platform.PublishResult{}, fmt.Errorf("init upload: %w", err)
+	}
+	pc.Log("publish_id %s", init.PublishID)
+
+	if err := a.uploadChunks(ctx, init.UploadURL, t.FilePath, st.Size(), chunk, count, pc); err != nil {
+		return platform.PublishResult{RemoteID: init.PublishID}, fmt.Errorf("upload: %w", err)
+	}
+
+	pc.Progress("processing on TikTok")
+	return a.waitDone(ctx, token, init.PublishID, o.Mode, ci.CreatorUsername)
+}
+
+func (a *Adapter) uploadChunks(ctx context.Context, uploadURL, path string, size, chunk, count int64, pc platform.PublishContext) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	for i := int64(0); i < count; i++ {
+		start := i * chunk
+		end := start + chunk - 1
+		if i == count-1 {
+			end = size - 1 // last chunk takes the remainder
+		}
+		pc.Progress(fmt.Sprintf("uploading %d/%d", i+1, count))
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, io.NewSectionReader(f, start, end-start+1))
+		req.ContentLength = end - start + 1
+		req.Header.Set("Content-Type", "video/mp4")
+		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+		if err := platform.DoJSON(a.HTTP, req, nil, nil); err != nil {
+			return fmt.Errorf("chunk %d/%d: %w", i+1, count, err)
+		}
+	}
+	return nil
+}
+
+func (a *Adapter) waitDone(ctx context.Context, token, publishID, mode, username string) (platform.PublishResult, error) {
+	res := platform.PublishResult{RemoteID: publishID}
+	deadline := time.Now().Add(a.PollTimeout)
+	for {
+		var s struct {
+			Status     string            `json:"status"`
+			FailReason string            `json:"fail_reason"`
+			PostIDs    []json.RawMessage `json:"publicaly_available_post_id"` // sic (TikTok spelling); numbers or strings
+		}
+		if err := a.api(ctx, token, http.MethodPost, "/v2/post/publish/status/fetch/", map[string]any{"publish_id": publishID}, &s); err != nil {
+			return res, fmt.Errorf("status: %w", err)
+		}
+		switch s.Status {
+		case "SEND_TO_USER_INBOX":
+			if mode == ModeInbox {
+				res.Note = "Sent to your TikTok inbox. Open TikTok to add the caption and post it."
+				return res, nil
+			}
+		case "PUBLISH_COMPLETE":
+			if len(s.PostIDs) > 0 {
+				id := strings.Trim(string(s.PostIDs[0]), `"`) // keep big numeric IDs exact
+				res.RemoteID = id
+				if username != "" {
+					res.Permalink = fmt.Sprintf("https://www.tiktok.com/@%s/video/%s", username, id)
+				}
+			} else {
+				res.Note = "Posted. TikTok returned no public link (private post or still in moderation)."
+			}
+			return res, nil
+		case "FAILED":
+			return res, fmt.Errorf("TikTok rejected the post: %s", s.FailReason)
+		}
+		if time.Now().After(deadline) {
+			return res, fmt.Errorf("TikTok is still processing after %s (status %s)", a.PollTimeout, s.Status)
+		}
+		select {
+		case <-ctx.Done():
+			return res, ctx.Err()
+		case <-time.After(a.PollInterval):
+		}
+	}
+}
+
+// api calls an Open API endpoint that uses the {"data":…, "error":{code,message}} envelope.
+func (a *Adapter) api(ctx context.Context, token, method, path string, body any, out any) error {
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rd = bytes.NewReader(b)
+	}
+	req, _ := http.NewRequestWithContext(ctx, method, a.APIBase+path, rd)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json; charset=UTF-8")
+	}
+	var env struct {
+		Data  json.RawMessage `json:"data"`
+		Error apiError        `json:"error"`
+	}
+	if err := platform.DoJSON(a.HTTP, req, &env, envelopeError); err != nil {
+		return err
+	}
+	if env.Error.Code != "" && env.Error.Code != "ok" {
+		return fmt.Errorf("%s: %s", env.Error.Code, env.Error.Message)
+	}
+	if out != nil && len(env.Data) > 0 {
+		return json.Unmarshal(env.Data, out)
+	}
+	return nil
+}
+
+type apiError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	LogID   string `json:"log_id"`
+}
+
+func envelopeError(body []byte) string {
+	var env struct {
+		Error apiError `json:"error"`
+	}
+	if json.Unmarshal(body, &env) != nil || env.Error.Code == "" {
+		return oauthError(body)
+	}
+	return fmt.Sprintf("%s: %s", env.Error.Code, env.Error.Message)
+}
+
+func oauthError(body []byte) string {
+	var r tokenResponse
+	if json.Unmarshal(body, &r) != nil || r.Error == "" {
+		return ""
+	}
+	return r.Error + ": " + r.ErrorDescription
+}
+
+// MissingSettings implements platform.SetupReporter.
+func (a *Adapter) MissingSettings() []string {
+	var m []string
+	if a.ClientKey == "" {
+		m = append(m, "TIKTOK_CLIENT_KEY")
+	}
+	if a.ClientSecret == "" {
+		m = append(m, "TIKTOK_CLIENT_SECRET")
+	}
+	return m
+}
