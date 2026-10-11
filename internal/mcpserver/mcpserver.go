@@ -51,6 +51,7 @@ func New(a *app.App) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "list_posts", Description: "List posts, newest first. Optional filters: status (draft|approved|publishing|published|partial|failed) and platform."}, t.listPosts)
 	mcp.AddTool(s, &mcp.Tool{Name: "get_review_link", Description: "URL of the review page where the user previews the converted files and approves the post."}, t.reviewLink)
 	mcp.AddTool(s, &mcp.Tool{Name: "publish_post", Description: "Publish an approved post. Fails unless the user approved it in the UI and enabled \"Allow Claude to publish\" in Settings."}, t.publishPost)
+	mcp.AddTool(s, &mcp.Tool{Name: "get_post_stats", Description: "Engagement of a published post per platform (likes, comments, views where the platform provides them)."}, t.postStats)
 	mcp.AddTool(s, &mcp.Tool{Name: "get_publish_status", Description: "Per-platform publish progress, permalinks and errors."}, t.publishStatus)
 
 	s.AddResource(&mcp.Resource{URI: "powerposter://brand", Name: "brand", Title: "Brand profile", Description: "Game name, link, default hashtags and tone notes for captions.", MIMEType: "application/json"},
@@ -325,6 +326,14 @@ func (t tools) publishPost(ctx context.Context, _ *mcp.CallToolRequest, in publi
 		return nil, nil, err
 	}
 	return nil, map[string]any{"status": v.Status, "message": "Publishing started. Check get_publish_status.", "targets": summarize(v).Targets}, nil
+}
+
+func (t tools) postStats(ctx context.Context, _ *mcp.CallToolRequest, in postIn) (*mcp.CallToolResult, any, error) {
+	st, err := t.a.Stats(ctx, in.PostID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return nil, map[string]any{"postId": in.PostID, "stats": st}, nil
 }
 
 func (t tools) publishStatus(ctx context.Context, _ *mcp.CallToolRequest, in postIn) (*mcp.CallToolResult, any, error) {

@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from 'react'
 
-export type PreviewMode = 'simulation' | 'safezones' | 'plain'
+export type PreviewMode = 'live' | 'simulation' | 'safezones' | 'plain'
 
 export interface PreviewProps {
   platform: string // instagram | tiktok | other

@@ -47,6 +47,7 @@ func (s *Server) PrivateHandler() http.Handler {
 	mux.HandleFunc("POST /api/posts/{id}/publish", s.publish)
 	mux.HandleFunc("GET /api/posts/{id}/attempts", s.attempts)
 	mux.HandleFunc("POST /api/posts/{id}/check-live", s.checkLive)
+	mux.HandleFunc("GET /api/posts/{id}/stats", s.stats)
 	mux.HandleFunc("POST /api/posts/{id}/duplicate", s.duplicate)
 	mux.HandleFunc("POST /api/posts/{id}/cover", s.uploadCover)
 	mux.HandleFunc("DELETE /api/posts/{id}/cover", s.clearCover)
@@ -278,6 +279,15 @@ func (s *Server) duplicate(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.App.DuplicatePost(r.Context(), id)
 	s.respondStatus(w, http.StatusCreated, v, err)
+}
+
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	st, err := s.App.Stats(r.Context(), id)
+	s.respond(w, st, err)
 }
 
 func (s *Server) checkLive(w http.ResponseWriter, r *http.Request) {

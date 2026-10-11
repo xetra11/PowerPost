@@ -166,3 +166,24 @@ type LocalRedirector interface {
 type LiveChecker interface {
 	IsLive(ctx context.Context, token TokenSet, remoteID string) (bool, error)
 }
+
+// Stats are engagement numbers of a published post. Nil means "not available".
+type Stats struct {
+	Likes    *int64    `json:"likes,omitempty"`
+	Comments *int64    `json:"comments,omitempty"`
+	Views    *int64    `json:"views,omitempty"`
+	Shares   *int64    `json:"shares,omitempty"`
+	Note     string    `json:"note,omitempty"` // e.g. which permission unlocks more numbers
+	At       time.Time `json:"at"`
+}
+
+// StatsProvider is optionally implemented by platforms that report engagement.
+type StatsProvider interface {
+	Stats(ctx context.Context, token TokenSet, remoteID string) (Stats, error)
+}
+
+// Embedder is optionally implemented by platforms whose public posts can be
+// shown in an iframe. It returns "" when the post can't be embedded.
+type Embedder interface {
+	EmbedURL(permalink, remoteID string) string
+}

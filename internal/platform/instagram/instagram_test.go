@@ -79,7 +79,20 @@ func fakeGraph(t *testing.T, containerStatus func(poll int) string) (*httptest.S
 	mux.HandleFunc("GET /v23.0/GONE", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"Unsupported get request. Object with ID 'GONE' does not exist","type":"GraphMethodException","code":100,"error_subcode":33}}`, 400)
 	})
+	mux.HandleFunc("GET /v23.0/M1/insights", func(w http.ResponseWriter, r *http.Request) {
+		ok(w, map[string]any{"data": []any{map[string]any{"name": "views", "period": "lifetime", "values": []any{map[string]any{"value": 5321}}}}})
+	})
+	mux.HandleFunc("GET /v23.0/M2/insights", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"(#10) Application does not have permission for this action","code":10}}`, 403)
+	})
+	mux.HandleFunc("GET /v23.0/M2", func(w http.ResponseWriter, r *http.Request) {
+		ok(w, map[string]any{"like_count": 3, "comments_count": 0})
+	})
 	mux.HandleFunc("GET /v23.0/M1", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("fields"), "like_count") {
+			ok(w, map[string]any{"like_count": 42, "comments_count": 7})
+			return
+		}
 		ok(w, map[string]any{"permalink": "https://www.instagram.com/reel/abc/"})
 	})
 	srv := httptest.NewServer(mux)
@@ -212,5 +225,29 @@ func TestCoverURLAndIsLive(t *testing.T) {
 	}
 	if live, err := a.IsLive(context.Background(), platform.TokenSet{AccessToken: "tok"}, "GONE"); err != nil || live {
 		t.Fatalf("GONE: %v %v", live, err)
+	}
+}
+
+func TestStatsAndEmbed(t *testing.T) {
+	srv, _ := fakeGraph(t, func(int) string { return "FINISHED" })
+	a := newTestAdapter(srv.URL)
+	tok := platform.TokenSet{AccessToken: "tok"}
+	s, err := a.Stats(context.Background(), tok, "M1")
+	if err != nil || *s.Likes != 42 || *s.Comments != 7 || s.Views == nil || *s.Views != 5321 || s.Note != "" {
+		t.Fatalf("M1 stats %+v %v", s, err)
+	}
+	s, err = a.Stats(context.Background(), tok, "M2") // no insights permission
+	if err != nil || *s.Likes != 3 || s.Views != nil || !strings.Contains(s.Note, "instagram_business_manage_insights") {
+		t.Fatalf("M2 stats %+v %v", s, err)
+	}
+	for in, want := range map[string]string{
+		"https://www.instagram.com/reel/DAbc123/":    "https://www.instagram.com/reel/DAbc123/embed/",
+		"https://www.instagram.com/p/XYZ/?igsh=1":    "https://www.instagram.com/p/XYZ/embed/",
+		"https://example.com/reel/DAbc123/":          "",
+		"https://www.instagram.com/donnervolk.game/": "",
+	} {
+		if got := a.EmbedURL(in, ""); got != want {
+			t.Errorf("EmbedURL(%s) = %q, want %q", in, got, want)
+		}
 	}
 }

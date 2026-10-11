@@ -322,3 +322,34 @@ func (a *App) CheckLive(ctx context.Context, id int64) (PostView, error) {
 	}
 	return a.GetPost(ctx, id)
 }
+
+// Stats fetches engagement numbers for the published platforms of a post.
+// Platform errors are reported in the stats' note instead of failing the call.
+func (a *App) Stats(ctx context.Context, id int64) (map[string]platform.Stats, error) {
+	v, err := a.GetPost(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]platform.Stats{}
+	for _, t := range v.Targets {
+		if t.Status != "published" || t.RemoteID == "" {
+			continue
+		}
+		ad, ok := a.Registry.Get(platform.ID(t.Platform))
+		provider, can := ad.(platform.StatsProvider)
+		if !ok || !can {
+			continue
+		}
+		token, err := a.token(ctx, ad)
+		if err != nil {
+			out[t.Platform] = platform.Stats{Note: err.Error(), At: time.Now()}
+			continue
+		}
+		s, err := provider.Stats(ctx, token, t.RemoteID)
+		if err != nil {
+			s = platform.Stats{Note: "Couldn't load numbers: " + err.Error(), At: time.Now()}
+		}
+		out[t.Platform] = s
+	}
+	return out, nil
+}

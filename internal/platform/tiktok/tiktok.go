@@ -526,3 +526,17 @@ func (a *Adapter) MissingSettings() []string {
 // AllowsLocalRedirect implements platform.LocalRedirector: TikTok accepts
 // http://localhost redirect URIs for apps registered with the Desktop platform.
 func (a *Adapter) AllowsLocalRedirect() bool { return true }
+
+// EmbedURL implements platform.Embedder for public posts (inbox uploads and
+// private posts have no public video ID).
+func (a *Adapter) EmbedURL(permalink, remoteID string) string {
+	if !strings.Contains(permalink, "/video/") || remoteID == "" {
+		return ""
+	}
+	for _, c := range remoteID {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	return "https://www.tiktok.com/embed/v2/" + remoteID
+}

@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { api, describeMedia, type Attempt, type Platform, type Post, type Target } from '../api'
+import { api, describeMedia, type Attempt, type Platform, type Post, type Stats, type Target } from '../api'
 import { CopyButton, ErrorBanner, IssueList, StatusBadge } from '../components/common'
 import { PhonePreview, type PreviewMode } from '../components/PhonePreview'
 import { usePolling } from '../usePolling'
@@ -15,7 +15,9 @@ export default function ReviewPage() {
   const { data: post, setData: setPost, error: loadError } = usePolling(() => api.post(id), 1500, busy)
   const [platforms, setPlatforms] = useState<Platform[]>([])
   const [mode, setModeState] = useState<PreviewMode>(loadMode)
+  const userPickedMode = useRef(false)
   const setMode = (m: PreviewMode) => {
+    userPickedMode.current = true
     setModeState(m)
     try {
       localStorage.setItem('pp.previewMode', m)
@@ -60,6 +62,25 @@ export default function ReviewPage() {
     api.checkLive(id).then(setPost).catch(() => {})
   }, [hasPublished, liveChecked, id, setPost])
 
+  // Published posts open in "Live post" mode unless you picked a mode yourself.
+  useEffect(() => {
+    if (hasPublished && !userPickedMode.current) setModeState('live')
+  }, [hasPublished])
+
+  const [stats, setStats] = useState<Record<string, Stats>>({})
+  const [statsLoading, setStatsLoading] = useState(false)
+  const loadStats = useCallback(() => {
+    setStatsLoading(true)
+    api
+      .stats(id)
+      .then(setStats)
+      .catch(() => {})
+      .finally(() => setStatsLoading(false))
+  }, [id])
+  useEffect(() => {
+    if (hasPublished) loadStats()
+  }, [hasPublished, loadStats])
+
   if (!post) return loadError ? <ErrorBanner error={loadError} /> : <p aria-busy="true">Loading…</p>
 
   const act = async (fn: () => Promise<Post>) => {
@@ -97,6 +118,7 @@ export default function ReviewPage() {
         <div role="group" className="mode-switch" aria-label="Preview mode">
           {(
             [
+              ['live', 'Live post'],
               ['simulation', 'App preview'],
               ['safezones', 'Safe zones'],
               ['plain', 'Video only'],
@@ -121,6 +143,9 @@ export default function ReviewPage() {
             handle={handles[t.platform]}
             approved={post.approvalValid}
             onCheckLive={() => act(() => api.checkLive(id))}
+            stats={stats[t.platform]}
+            statsLoading={statsLoading}
+            onRefreshStats={loadStats}
             onPublish={t.canPublish ? () => publish([t.platform]) : undefined}
           />
         ))}
@@ -198,6 +223,9 @@ function ReviewCard({
   approved,
   onPublish,
   onCheckLive,
+  stats,
+  statsLoading,
+  onRefreshStats,
 }: {
   post: Post
   target: Target
@@ -207,6 +235,9 @@ function ReviewCard({
   approved: boolean
   onPublish?: () => void
   onCheckLive: () => void
+  stats?: Stats
+  statsLoading: boolean
+  onRefreshStats: () => void
 }) {
   const r = t.rendition
   const options = platform ? Object.entries(platform.optionsSchema.properties) : []
@@ -218,6 +249,28 @@ function ReviewCard({
         <StatusBadge status={t.status} />
       </header>
 
+      {t.status === 'published' && <StatsBar stats={stats} loading={statsLoading} onRefresh={onRefreshStats} />}
+      {mode === 'live' && t.status === 'published' && t.embedUrl ? (
+        <iframe
+          className={`live-embed live-${t.platform}`}
+          src={t.embedUrl}
+          title={`${t.displayName} post`}
+          loading="lazy"
+          allow="autoplay; encrypted-media; picture-in-picture; clipboard-write"
+          allowFullScreen
+        />
+      ) : mode === 'live' && t.status === 'published' ? (
+        <div className="phone">
+          <div className="phone-placeholder live-unavailable">
+            This post can't be embedded (inbox upload or private post).
+            {t.permalink && (
+              <a href={t.permalink} target="_blank" rel="noreferrer">
+                Open on {t.displayName} ↗
+              </a>
+            )}
+          </div>
+        </div>
+      ) : (
       <PhonePreview
         platform={t.platform}
         videoUrl={r?.status === 'ready' ? r.url : null}
@@ -225,8 +278,9 @@ function ReviewCard({
         caption={t.finalCaption}
         username={handle ?? platform?.accountName ?? ''}
         label={disclosureLabel(t)}
-        mode={mode}
+        mode={mode === 'live' ? 'simulation' : mode}
       />
+      )}
       {r?.info && <small className="muted">{describeMedia(r.info)}</small>}
       {(t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl) && (
         <div className="cover-mini">
@@ -318,9 +372,25 @@ function disclosureLabel(t: Target): string | undefined {
 function loadMode(): PreviewMode {
   try {
     const m = localStorage.getItem('pp.previewMode')
-    if (m === 'simulation' || m === 'safezones' || m === 'plain') return m
+    if (m === 'live' || m === 'simulation' || m === 'safezones' || m === 'plain') return m
   } catch {
     /* storage unavailable */
   }
   return 'simulation'
+}
+
+function StatsBar({ stats, loading, onRefresh }: { stats?: Stats; loading: boolean; onRefresh: () => void }) {
+  const fmt = (n?: number) => (n === undefined ? '–' : n >= 10000 ? `${(n / 1000).toFixed(1)}K` : n.toLocaleString())
+  return (
+    <div className="stats-bar">
+      <span title="Likes">♥ {fmt(stats?.likes)}</span>
+      <span title="Comments">💬 {fmt(stats?.comments)}</span>
+      {stats?.views !== undefined && <span title="Views">▶ {fmt(stats.views)}</span>}
+      <button type="button" className="small secondary outline" onClick={onRefresh} disabled={loading} aria-busy={loading}>
+        Refresh
+      </button>
+      {stats?.note && <small className="muted stats-note">{stats.note}</small>}
+      {!stats && !loading && <small className="muted stats-note">No numbers available for this platform.</small>}
+    </div>
+  )
 }

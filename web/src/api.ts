@@ -63,6 +63,16 @@ export interface Target {
   issues: Issue[]
   notices: string[]
   canPublish: boolean
+  embedUrl: string
+}
+
+export interface Stats {
+  likes?: number
+  comments?: number
+  views?: number
+  shares?: number
+  note?: string
+  at: string
 }
 
 export type PostStatus = 'draft' | 'approved' | 'publishing' | 'published' | 'partial' | 'failed'
@@ -168,6 +178,7 @@ export const api = {
   unapprove: (id: number) => request<Post>('POST', `/api/posts/${id}/unapprove`, {}),
   publish: (id: number, platforms: string[] = []) => request<Post>('POST', `/api/posts/${id}/publish`, { platforms }),
   duplicatePost: (id: number) => request<Post>('POST', `/api/posts/${id}/duplicate`, {}),
+  stats: (id: number) => request<Record<string, Stats>>('GET', `/api/posts/${id}/stats`),
   checkLive: (id: number) => request<Post>('POST', `/api/posts/${id}/check-live`, {}),
   clearCover: (id: number) => request<Post>('DELETE', `/api/posts/${id}/cover`),
   attempts: (id: number) => request<Attempt[]>('GET', `/api/posts/${id}/attempts`),

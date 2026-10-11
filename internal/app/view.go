@@ -45,6 +45,7 @@ type TargetView struct {
 	Issues        []platform.ValidationIssue `json:"issues"`
 	Notices       []string                   `json:"notices"`
 	CanPublish    bool                       `json:"canPublish"` // this platform can be published now
+	EmbedURL      string                     `json:"embedUrl"`   // iframe URL of the live post, if embeddable
 }
 
 type PostView struct {
@@ -107,6 +108,9 @@ func (a *App) buildView(ctx context.Context, p store.Post) (PostView, error) {
 					tv.Rendition.URL = ""
 				}
 			}
+		}
+		if e, ok := ad.(platform.Embedder); ok && t.Status == "published" && t.Permalink != "" {
+			tv.EmbedURL = e.EmbedURL(t.Permalink, t.RemoteID)
 		}
 		if t.Enabled {
 			anyEnabled = true

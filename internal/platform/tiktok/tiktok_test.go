@@ -236,3 +236,13 @@ func TestAuthorizeURLUsesHexPKCE(t *testing.T) {
 		t.Fatal("TikTok should allow localhost redirects")
 	}
 }
+
+func TestEmbedURL(t *testing.T) {
+	a := New("k", "s")
+	if got := a.EmbedURL("https://www.tiktok.com/@dv/video/7123456789", "7123456789"); got != "https://www.tiktok.com/embed/v2/7123456789" {
+		t.Fatalf("got %q", got)
+	}
+	if a.EmbedURL("", "p1") != "" || a.EmbedURL("https://www.tiktok.com/@dv/video/x", "v_pub_x") != "" {
+		t.Fatal("inbox/private posts must not be embeddable")
+	}
+}

@@ -444,3 +444,60 @@ func (a *Adapter) IsLive(ctx context.Context, t platform.TokenSet, remoteID stri
 	}
 	return false, err
 }
+
+// Stats implements platform.StatsProvider. Likes and comments come with
+// instagram_business_basic; views need instagram_business_manage_insights.
+func (a *Adapter) Stats(ctx context.Context, t platform.TokenSet, remoteID string) (platform.Stats, error) {
+	s := platform.Stats{At: time.Now()}
+	var m struct {
+		LikeCount     *int64 `json:"like_count"`
+		CommentsCount *int64 `json:"comments_count"`
+	}
+	if err := a.graphGet(ctx, t.AccessToken, "/"+remoteID, url.Values{"fields": {"like_count,comments_count"}}, &m); err != nil {
+		return s, err
+	}
+	s.Likes, s.Comments = m.LikeCount, m.CommentsCount
+
+	var ins struct {
+		Data []struct {
+			Name   string `json:"name"`
+			Values []struct {
+				Value int64 `json:"value"`
+			} `json:"values"`
+			TotalValue *struct {
+				Value int64 `json:"value"`
+			} `json:"total_value"`
+		} `json:"data"`
+	}
+	if err := a.graphGet(ctx, t.AccessToken, "/"+remoteID+"/insights", url.Values{"metric": {"views"}}, &ins); err != nil {
+		s.Note = "Views need the instagram_business_manage_insights permission (generate a new token after adding it)."
+		return s, nil
+	}
+	for _, d := range ins.Data {
+		if d.Name != "views" {
+			continue
+		}
+		var v int64
+		switch {
+		case d.TotalValue != nil:
+			v = d.TotalValue.Value
+		case len(d.Values) > 0:
+			v = d.Values[0].Value
+		}
+		s.Views = &v
+	}
+	return s, nil
+}
+
+// EmbedURL implements platform.Embedder: https://www.instagram.com/reel/<code>/embed/
+func (a *Adapter) EmbedURL(permalink, _ string) string {
+	u, err := url.Parse(permalink)
+	if err != nil || !strings.HasSuffix(u.Host, "instagram.com") {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 || (parts[0] != "reel" && parts[0] != "p" && parts[0] != "tv") {
+		return ""
+	}
+	return "https://www.instagram.com/" + parts[0] + "/" + parts[1] + "/embed/"
+}
