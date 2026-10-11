@@ -266,7 +266,7 @@ internal/
   secret/               AES-GCM token encryption
   webui/                built UI (embedded with -tags embedui)
 web/                    React + Vite + Pico CSS
-docs/CONCEPT.md         design concept
+docs/logo/              logo source images
 ```
 
 ### Adding a platform
@@ -298,4 +298,4 @@ Nothing else needs to change: the UI, the MCP tools, conversion and review pick 
 
 ## Roadmap
 
-Planned next: a history view grouped by platform, image and carousel posts, scheduling, more platforms (YouTube Shorts, X, Bluesky, Threads) and metrics. See [docs/CONCEPT.md](docs/CONCEPT.md).
+Planned next: a history view grouped by platform, image and carousel posts, scheduling, more platforms (YouTube Shorts, X, Bluesky, Threads) and metrics.
