@@ -62,6 +62,7 @@ export interface Target {
   rendition: Rendition | null
   issues: Issue[]
   notices: string[]
+  canPublish: boolean
 }
 
 export type PostStatus = 'draft' | 'approved' | 'publishing' | 'published' | 'partial' | 'failed'
@@ -85,6 +86,7 @@ export interface Post {
   ready: boolean
   approvalValid: boolean
   canPublish: boolean
+  canPublishAll: boolean
   editUrl: string
   reviewUrl: string
 }

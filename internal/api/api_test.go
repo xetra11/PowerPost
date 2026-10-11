@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"powerposter/internal/api"
 	"powerposter/internal/testutil"
@@ -135,5 +136,36 @@ func TestOAuthCallback(t *testing.T) {
 		if rec := do(pub, "GET", p, nil, nil); rec.Code != http.StatusNotFound {
 			t.Errorf("public %s: %d", p, rec.Code)
 		}
+	}
+}
+
+func TestPublicMediaLinks(t *testing.T) {
+	s, private := newServer(t)
+	pub := s.PublicHandler()
+	file := filepath.Join(s.App.Cfg.DataDir, "media", "renditions", "9-abc.mp4")
+	if err := os.WriteFile(file, []byte("video-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link, ok := s.App.PublicMediaURL(file, time.Hour)
+	if !ok || !strings.HasPrefix(link, "https://pp.example.com/public-media/") {
+		t.Fatalf("link %q %v", link, ok)
+	}
+	path := strings.TrimPrefix(link, "https://pp.example.com")
+	if rec := do(pub, "GET", path, nil, nil); rec.Code != 200 || rec.Body.String() != "video-bytes" {
+		t.Fatalf("valid link: %d %q", rec.Code, rec.Body)
+	}
+	expired, _ := s.App.PublicMediaURL(file, -time.Minute)
+	for _, bad := range []string{
+		path + "x", // tampered signature
+		strings.Replace(path, "9-abc", "9-abd", 1),            // other file
+		strings.TrimPrefix(expired, "https://pp.example.com"), // expired
+	} {
+		if rec := do(pub, "GET", bad, nil, nil); rec.Code != 404 {
+			t.Errorf("%s: %d", bad, rec.Code)
+		}
+	}
+	// The private listener doesn't serve public-media links as files.
+	if rec := do(private, "GET", path, nil, nil); rec.Body.String() == "video-bytes" {
+		t.Fatal("private listener served the file")
 	}
 }

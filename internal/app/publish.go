@@ -80,11 +80,15 @@ func (a *App) Publish(ctx context.Context, id int64, platforms []string, viaMCP 
 	if !v.ApprovalValid {
 		return v, conflict("post %d is not approved (or changed since approval). Review and approve it first: %s", id, v.ReviewURL)
 	}
-	if !v.CanPublish {
-		return v, conflict("post %d can't be published: %s", id, describeBlocking(v, ""))
+	for _, p := range platforms {
+		if !slices.ContainsFunc(v.Targets, func(t TargetView) bool { return t.Platform == p && t.Enabled }) {
+			return v, invalid("%s is not enabled for post %d", p, id)
+		}
 	}
 
+	// Only the selected platforms (all remaining ones if none are given) must be ready.
 	var todo []TargetView
+	var blocked []string
 	for _, t := range v.Targets {
 		if !t.Enabled || t.Status == "published" || t.Status == "queued" || t.Status == "publishing" {
 			continue
@@ -92,7 +96,14 @@ func (a *App) Publish(ctx context.Context, id int64, platforms []string, viaMCP 
 		if len(platforms) > 0 && !slices.Contains(platforms, t.Platform) {
 			continue
 		}
+		if !t.CanPublish {
+			blocked = append(blocked, t.DisplayName+": "+targetBlockers(t))
+			continue
+		}
 		todo = append(todo, t)
+	}
+	if len(blocked) > 0 {
+		return v, conflict("can't publish yet — %s", strings.Join(blocked, "; "))
 	}
 	if len(todo) == 0 {
 		return v, conflict("nothing to publish: selected platforms are already published or in progress")
@@ -165,6 +176,7 @@ func (a *App) runPublish(ctx context.Context, raw json.RawMessage) error {
 				logf("%s", stage)
 				_ = a.Store.SetTargetStage(ctx, tv.ID, stage)
 			},
+			PublicURL: func(path string) (string, bool) { return a.PublicMediaURL(path, 2*time.Hour) },
 		}
 		return ad.Publish(ctx, pc, a.resolve(v.Post, tv))
 	}()
@@ -253,4 +265,18 @@ func describeBlocking(v PostView, scope platform.Scope) string {
 		return "unknown reason"
 	}
 	return strings.Join(msgs, "; ")
+}
+
+// targetBlockers explains why a single platform can't be published.
+func targetBlockers(t TargetView) string {
+	var msgs []string
+	for _, i := range t.Issues {
+		if i.Severity == platform.SeverityError {
+			msgs = append(msgs, i.Message)
+		}
+	}
+	if len(msgs) == 0 {
+		return "not ready"
+	}
+	return strings.Join(msgs, " ")
 }

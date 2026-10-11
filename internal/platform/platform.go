@@ -100,6 +100,9 @@ type PublishContext struct {
 	Token    TokenSet
 	Log      func(format string, args ...any)
 	Progress func(stage string)
+	// PublicURL returns a short-lived public HTTPS link to a local file, for
+	// platforms that fetch media themselves. ok is false without a tunnel.
+	PublicURL func(path string) (url string, ok bool)
 }
 
 type PublishResult struct {

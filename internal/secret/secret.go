@@ -4,7 +4,9 @@ package secret
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -14,7 +16,8 @@ import (
 )
 
 type Box struct {
-	aead cipher.AEAD
+	aead    cipher.AEAD
+	signKey []byte // derived from the key; signs short-lived public links
 }
 
 // NewKey returns a fresh random key, base64 encoded.
@@ -43,7 +46,8 @@ func Open(key string) (*Box, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Box{aead: aead}, nil
+	signKey := sha256.Sum256(append([]byte("powerposter-sign:"), raw...))
+	return &Box{aead: aead, signKey: signKey[:]}, nil
 }
 
 // LoadOrCreate uses key if set; otherwise it reads (or creates) dataDir/secret.key.
@@ -90,4 +94,16 @@ func (b *Box) Unseal(sealed []byte) (string, error) {
 		return "", fmt.Errorf("cannot decrypt token (was POWERPOSTER_SECRET_KEY changed?): %w", err)
 	}
 	return string(plain), nil
+}
+
+// Sign returns an HMAC-SHA256 over data, base64url encoded.
+func (b *Box) Sign(data string) string {
+	m := hmac.New(sha256.New, b.signKey)
+	m.Write([]byte(data))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+// Verify checks a signature made by Sign in constant time.
+func (b *Box) Verify(data, sig string) bool {
+	return hmac.Equal([]byte(b.Sign(data)), []byte(sig))
 }

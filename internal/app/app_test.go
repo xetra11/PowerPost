@@ -279,3 +279,55 @@ func TestLocalRedirectWithoutTunnel(t *testing.T) {
 		t.Fatalf("remote connect without tunnel: %v", err)
 	}
 }
+
+func TestPublishPlatformsIndividually(t *testing.T) {
+	ig, tt := &testutil.FakeAdapter{Name: "ig"}, &testutil.FakeAdapter{Name: "tt"}
+	a := testutil.NewApp(t, ig, tt)
+	ctx := context.Background()
+	if err := a.Disconnect(ctx, "tt"); err != nil { // tt can't publish yet
+		t.Fatal(err)
+	}
+
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{Caption: "Hi"})
+	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 1080, 1920, 30, 1.5))
+	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitReady(t, a, v.ID)
+	v, err := a.Approve(ctx, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.CanPublish || v.CanPublishAll || !v.Targets[0].CanPublish || v.Targets[1].CanPublish {
+		t.Fatalf("canPublish=%v all=%v ig=%v tt=%v", v.CanPublish, v.CanPublishAll, v.Targets[0].CanPublish, v.Targets[1].CanPublish)
+	}
+
+	// "Publish all" is refused and names the blocked platform...
+	if _, err := a.Publish(ctx, v.ID, nil, false); app.KindOf(err) != app.KindConflict || !strings.Contains(err.Error(), "Fake tt") {
+		t.Fatalf("publish all: %v", err)
+	}
+	// ...but the connected platform can go out on its own.
+	if _, err := a.Publish(ctx, v.ID, []string{"ig"}, false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitFor(t, "partial", 10*time.Second, func() bool {
+		v, _ = a.GetPost(ctx, v.ID)
+		return v.Status == app.StatusPartial
+	})
+	if ig.PublishedCount() != 1 || tt.PublishedCount() != 0 || v.Targets[1].Status != "idle" {
+		t.Fatalf("ig=%d tt=%d ttStatus=%s", ig.PublishedCount(), tt.PublishedCount(), v.Targets[1].Status)
+	}
+
+	// Later: connect tt and publish the rest.
+	testutil.Connect(t, a, "tt")
+	if _, err := a.Publish(ctx, v.ID, []string{"tt"}, false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitFor(t, "published", 10*time.Second, func() bool {
+		v, _ = a.GetPost(ctx, v.ID)
+		return v.Status == app.StatusPublished
+	})
+	if _, err := a.Publish(ctx, v.ID, []string{"nope"}, false); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("unknown platform: %v", err)
+	}
+}

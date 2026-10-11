@@ -172,3 +172,6 @@ dl.options dd { margin: 0; text-align: right; }
 .sim-mute { top: 11%; right: 3cqw; width: 9cqw; height: 9cqw; }
 .sim-mute .sim-icon { width: 5cqw; height: 5cqw; }
 @media (prefers-reduced-motion: reduce) { .tt-disc, .marquee { animation: none; } }
+.card-publish { margin: 0.75rem 0; }
+.card-publish button { width: 100%; margin: 0; }
+.card-publish .issues { margin-top: 0.35rem; }

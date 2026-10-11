@@ -51,6 +51,9 @@ func fakeGraph(t *testing.T, containerStatus func(poll int) string) (*httptest.S
 	mux.HandleFunc("POST /v23.0/17841/media", func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, fmt.Sprintf("create %s %s feed=%s thumb=%s token=%s", r.FormValue("media_type"), r.FormValue("upload_type"),
 			r.FormValue("share_to_feed"), r.FormValue("thumb_offset"), r.FormValue("access_token")))
+		if v := r.FormValue("video_url"); v != "" {
+			calls = append(calls, "video_url "+v)
+		}
 		if r.FormValue("caption") != "Hello #indiegame" {
 			http.Error(w, `{"error":{"message":"caption mismatch","code":100}}`, 400)
 			return
@@ -167,5 +170,18 @@ func TestImportToken(t *testing.T) {
 	}
 	if ts.AccessToken != "dashboard-token" || ts.AccountID != "17841" || ts.AccountName != "donnervolk" || time.Until(ts.ExpiresAt) < 59*24*time.Hour {
 		t.Fatalf("unexpected token %+v", ts)
+	}
+}
+
+func TestPublishReelViaPublicURL(t *testing.T) {
+	srv, calls := fakeGraph(t, func(int) string { return "FINISHED" })
+	pc := testContext()
+	pc.PublicURL = func(string) (string, bool) { return "https://tunnel.example/public-media/abc", true }
+	if _, err := newTestAdapter(srv.URL).Publish(context.Background(), pc, testTarget(t)); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(*calls, "\n")
+	if !strings.Contains(got, "create REELS  feed=false") || !strings.Contains(got, "video_url https://tunnel.example/public-media/abc") || strings.Contains(got, "upload ") {
+		t.Fatalf("calls:\n%s", got)
 	}
 }

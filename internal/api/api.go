@@ -68,11 +68,13 @@ func (s *Server) PrivateHandler() http.Handler {
 	return s.logRequests(localHostOnly(s.App.Cfg.BaseURL, csrf.Handler(mux)))
 }
 
-// PublicHandler is what the tunnel exposes: OAuth callbacks only.
+// PublicHandler is what the tunnel exposes: OAuth callbacks and signed,
+// expiring links to converted videos (for platforms that fetch media).
 func (s *Server) PublicHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /oauth/{platform}/callback", s.oauthCallback)
+	mux.HandleFunc("GET /public-media/{token}", s.publicMedia)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	})
@@ -277,6 +279,18 @@ func (s *Server) media(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	http.ServeFile(w, r, p) // supports Range requests for video seeking
+}
+
+// publicMedia serves a rendition to a platform via a signed, expiring token.
+func (s *Server) publicMedia(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.App.ResolvePublicMedia(r.PathValue("token"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, p)
 }
 
 // oauthCallback finishes a platform sign-in and sends the browser back to Settings.

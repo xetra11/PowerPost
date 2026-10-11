@@ -43,6 +43,7 @@ type TargetView struct {
 	Rendition     *RenditionView             `json:"rendition"`
 	Issues        []platform.ValidationIssue `json:"issues"`
 	Notices       []string                   `json:"notices"`
+	CanPublish    bool                       `json:"canPublish"` // this platform can be published now
 }
 
 type PostView struct {
@@ -52,7 +53,8 @@ type PostView struct {
 	Issues        []platform.ValidationIssue `json:"issues"`
 	Ready         bool                       `json:"ready"`         // can be approved
 	ApprovalValid bool                       `json:"approvalValid"` // approved and unchanged since
-	CanPublish    bool                       `json:"canPublish"`
+	CanPublish    bool                       `json:"canPublish"`    // at least one platform can be published now
+	CanPublishAll bool                       `json:"canPublishAll"` // every remaining platform can be published now
 	ContentHash   string                     `json:"-"`
 	EditURL       string                     `json:"editUrl"`
 	ReviewURL     string                     `json:"reviewUrl"`
@@ -124,11 +126,26 @@ func (a *App) buildView(ctx context.Context, p store.Post) (PostView, error) {
 	contentErrors := slices.ContainsFunc(v.Issues, func(i platform.ValidationIssue) bool {
 		return i.Severity == platform.SeverityError && i.Scope == platform.ScopeContent
 	})
-	anyErrors := slices.ContainsFunc(v.Issues, func(i platform.ValidationIssue) bool { return i.Severity == platform.SeverityError })
 	v.Ready = anyEnabled && allReady && !contentErrors
 	v.ApprovalValid = p.ApprovedHash != "" && p.ApprovedHash == v.ContentHash
-	v.CanPublish = v.ApprovalValid && v.Ready && !anyErrors &&
-		(p.Status == StatusApproved || p.Status == StatusPartial || p.Status == StatusFailed)
+
+	// Platforms are published independently: one can go out while another
+	// still waits for its account connection or is being uploaded.
+	postOK := v.ApprovalValid && v.Ready &&
+		(p.Status == StatusApproved || p.Status == StatusPartial || p.Status == StatusFailed || p.Status == StatusPublishing)
+	remaining := 0
+	v.CanPublishAll = postOK
+	for i := range v.Targets {
+		t := &v.Targets[i]
+		if !t.Enabled || t.Status == "published" || t.Status == "queued" || t.Status == "publishing" {
+			continue
+		}
+		remaining++
+		t.CanPublish = postOK && !slices.ContainsFunc(t.Issues, func(i platform.ValidationIssue) bool { return i.Severity == platform.SeverityError })
+		v.CanPublish = v.CanPublish || t.CanPublish
+		v.CanPublishAll = v.CanPublishAll && t.CanPublish
+	}
+	v.CanPublishAll = v.CanPublishAll && remaining > 0
 	return v, nil
 }
 

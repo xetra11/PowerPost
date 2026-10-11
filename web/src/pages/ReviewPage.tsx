@@ -68,7 +68,6 @@ export default function ReviewPage() {
   const enabled = post.targets.filter((t) => t.enabled)
   const pending = enabled.filter((t) => t.status !== 'published')
   const contentErrors = post.issues.filter((i) => i.severity === 'error' && i.scope === 'content')
-  const accountErrors = post.issues.filter((i) => i.severity === 'error' && i.scope === 'account')
   const editable = post.status === 'draft' || post.status === 'approved' || post.status === 'failed'
 
   const publish = (platforms: string[] = []) => {
@@ -111,7 +110,8 @@ export default function ReviewPage() {
             platform={platforms.find((p) => p.id === t.platform)}
             mode={mode}
             handle={handles[t.platform]}
-            onRetry={post.canPublish && t.status === 'failed' ? () => publish([t.platform]) : undefined}
+            approved={post.approvalValid}
+            onPublish={t.canPublish ? () => publish([t.platform]) : undefined}
           />
         ))}
         {enabled.length === 0 && <p>No platform selected. Go back and enable at least one.</p>}
@@ -141,7 +141,7 @@ export default function ReviewPage() {
           <>
             <div>
               {post.approvalValid ? <strong>Approved ✓</strong> : <strong>Changed since approval — approve again.</strong>}
-              {accountErrors.length > 0 && <IssueList issues={accountErrors} />}
+              {post.canPublish && !post.canPublishAll && <p className="muted">Some platforms aren't ready yet — publish the others individually on their cards.</p>}
             </div>
             <div className="actions">
               {editable && (
@@ -149,8 +149,8 @@ export default function ReviewPage() {
                   Unapprove
                 </button>
               )}
-              <button onClick={() => publish()} disabled={!post.canPublish || working || pending.length === 0} aria-busy={working}>
-                {post.status === 'partial' || post.status === 'failed' ? 'Publish remaining' : 'Publish now'}
+              <button onClick={() => publish()} disabled={!post.canPublishAll || working} aria-busy={working}>
+                {pending.length > 1 ? `Publish all (${pending.length})` : post.status === 'partial' || post.status === 'failed' ? 'Publish remaining' : 'Publish now'}
               </button>
             </div>
           </>
@@ -185,14 +185,16 @@ function ReviewCard({
   platform,
   mode,
   handle,
-  onRetry,
+  approved,
+  onPublish,
 }: {
   post: Post
   target: Target
   platform: Platform | undefined
   mode: PreviewMode
   handle?: string
-  onRetry?: () => void
+  approved: boolean
+  onPublish?: () => void
 }) {
   const r = t.rendition
   const options = platform ? Object.entries(platform.optionsSchema.properties) : []
@@ -231,10 +233,17 @@ function ReviewCard({
       {t.status === 'failed' && (
         <div className="banner banner-error">
           {t.error}
-          {onRetry && (
-            <button className="small" onClick={onRetry}>
-              Retry
-            </button>
+        </div>
+      )}
+      {approved && (t.status === 'idle' || t.status === 'failed') && (
+        <div className="card-publish">
+          {onPublish ? (
+            <button onClick={onPublish}>{t.status === 'failed' ? `Retry ${t.displayName}` : `Publish to ${t.displayName}`}</button>
+          ) : (
+            <>
+              <small className="muted">Can't publish to {t.displayName} yet:</small>
+              <IssueList issues={t.issues.filter((i) => i.severity === 'error')} />
+            </>
           )}
         </div>
       )}

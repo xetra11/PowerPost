@@ -233,9 +233,19 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	pc.Progress("creating container")
 	form := url.Values{
 		"media_type":    {"REELS"},
-		"upload_type":   {"resumable"},
 		"caption":       {t.Caption},
 		"share_to_feed": {strconv.FormatBool(o.ShareToFeed)},
+	}
+	// Prefer letting Instagram fetch the file from a public link (works for
+	// all accounts); fall back to a direct resumable upload without a tunnel.
+	publicURL, hasPublic := "", false
+	if pc.PublicURL != nil {
+		publicURL, hasPublic = pc.PublicURL(t.FilePath)
+	}
+	if hasPublic {
+		form.Set("video_url", publicURL)
+	} else {
+		form.Set("upload_type", "resumable")
 	}
 	if t.CoverMs > 0 {
 		form.Set("thumb_offset", strconv.FormatInt(t.CoverMs, 10))
@@ -244,13 +254,20 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 		ID string `json:"id"`
 	}
 	if err := a.graphPost(ctx, token, "/"+uid+"/media", form, &container); err != nil {
+		if !hasPublic && strings.Contains(err.Error(), "video_url") {
+			return platform.PublishResult{}, fmt.Errorf("Instagram needs to download the video from a public link for this account. Set up the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL, see README → Tunnel) and retry: %w", err)
+		}
 		return platform.PublishResult{}, fmt.Errorf("create container: %w", err)
 	}
 	pc.Log("container %s created", container.ID)
 
-	pc.Progress("uploading")
-	if err := a.upload(ctx, token, container.ID, t.FilePath); err != nil {
-		return platform.PublishResult{RemoteID: container.ID}, fmt.Errorf("upload: %w", err)
+	if hasPublic {
+		pc.Log("Instagram fetches the video from %s", strings.SplitN(publicURL, "/public-media/", 2)[0]+"/public-media/…")
+	} else {
+		pc.Progress("uploading")
+		if err := a.upload(ctx, token, container.ID, t.FilePath); err != nil {
+			return platform.PublishResult{RemoteID: container.ID}, fmt.Errorf("upload: %w", err)
+		}
 	}
 
 	pc.Progress("processing on Instagram")
