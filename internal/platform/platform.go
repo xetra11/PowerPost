@@ -86,9 +86,10 @@ func (t TokenSet) NeedsRefresh(margin time.Duration) bool {
 }
 
 type Authenticator interface {
-	// AuthorizeURL is where the user's browser is sent to grant access.
-	AuthorizeURL(state, redirectURI string) string
-	Exchange(ctx context.Context, code, redirectURI string) (TokenSet, error)
+	// AuthorizeURL is where the user's browser is sent to grant access. verifier is a
+	// PKCE code verifier; adapters that use PKCE derive their challenge from it.
+	AuthorizeURL(state, redirectURI, verifier string) string
+	Exchange(ctx context.Context, code, redirectURI, verifier string) (TokenSet, error)
 	Refresh(ctx context.Context, t TokenSet) (TokenSet, error)
 	// RefreshMargin: refresh when the token expires sooner than this.
 	RefreshMargin() time.Duration
@@ -140,4 +141,17 @@ type AccountInfoProvider interface {
 // missing (e.g. environment variables), so the UI can tell the user what to add.
 type SetupReporter interface {
 	MissingSettings() []string
+}
+
+// TokenImporter is optionally implemented by platforms that let the user paste
+// an access token generated in their developer dashboard, skipping the OAuth
+// redirect (which needs a public HTTPS URL).
+type TokenImporter interface {
+	ImportToken(ctx context.Context, accessToken string) (TokenSet, error)
+}
+
+// LocalRedirector is optionally implemented by platforms that accept an
+// http://localhost OAuth redirect (e.g. TikTok desktop apps), so no tunnel is needed.
+type LocalRedirector interface {
+	AllowsLocalRedirect() bool
 }

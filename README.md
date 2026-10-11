@@ -156,7 +156,18 @@ Resources: `powerposter://brand` (game name, link, hashtags, tone notes from Set
 
 Both platforms need an **HTTPS** redirect URL for signing in. PowerPoster has a second, internal listener (port 4001) that serves *only* the OAuth callbacks. Only that listener is exposed through a tunnel; the UI, the API and MCP stay on your machine.
 
-### 1. Tunnel (Cloudflare, free)
+### 1. Tunnel
+
+**ngrok (easiest, free, no own domain):**
+
+1. Create an account on [ngrok.com](https://ngrok.com), claim your free static domain under *Domains* (e.g. `name.ngrok-free.dev`), install ngrok (`winget install ngrok.ngrok`) and run `ngrok config add-authtoken <token>` once.
+2. In `.env` set `NGROK_DOMAIN=name.ngrok-free.dev`.
+3. Start PowerPoster as usual. It starts ngrok itself, forwards `https://name.ngrok-free.dev` to the callback listener (port 4001), uses it as `PUBLIC_BASE_URL`, and stops ngrok on exit. Don't run ngrok by hand at the same time.
+   In Docker, also set `NGROK_AUTHTOKEN` in `.env` and run `docker compose --profile ngrok up -d`.
+
+After a platform sign-in, the free ngrok plan shows a warning page once. Click **Visit Site** to continue.
+
+**Or Cloudflare (own domain):**
 
 1. In the Cloudflare dashboard go to *Zero Trust → Networks → Tunnels* and create a tunnel. Copy its **token**.
 2. Add a *public hostname*, e.g. `pp.yourstudio.com`, with service **`http://powerposter:4001`** (Docker) or **`http://localhost:4001`** (native run).
@@ -179,6 +190,10 @@ Settings shows the exact redirect URI to register for each platform: `<PUBLIC_BA
 
 Requires an Instagram **Professional** account (Business or Creator). No Facebook Page is needed.
 
+**Quickest way, no tunnel needed:** in your Meta app go to *Instagram → API setup with Instagram login → Generate access tokens*, add your Instagram account (it must accept the tester invite), click *Generate token*, and paste it in PowerPoster under *Settings → Instagram → Or paste an access token*. The token lasts 60 days and is refreshed automatically while PowerPoster is running.
+
+**Or with OAuth (Connect button):**
+
 1. Go to [developers.facebook.com](https://developers.facebook.com/apps) → *Create app* → pick the Instagram use case that offers the **Instagram API with Instagram Login** (dashboard names change from time to time).
 2. Under *Instagram → API setup with Instagram login*:
    - Add the permissions `instagram_business_basic` and `instagram_business_content_publish`.
@@ -191,7 +206,10 @@ The app can stay in development mode for your own accounts; no App Review is nee
 ### 3. TikTok
 
 1. Go to [developers.tiktok.com](https://developers.tiktok.com/) → *Manage apps* → create an app. Add the products **Login Kit** and **Content Posting API**.
-2. Add the scopes `user.info.basic`, `video.upload` and `video.publish`, and the redirect URI `https://pp.yourstudio.com/oauth/tiktok/callback`.
+2. Add the scopes `user.info.basic`, `video.upload` and `video.publish`, and register the redirect URI shown in PowerPoster's Settings:
+   - **Without a tunnel:** in Login Kit choose the **Desktop** platform and register `http://localhost:4000/oauth/tiktok/callback`. PowerPoster uses this automatically when `PUBLIC_BASE_URL` is empty.
+   - **With a tunnel:** `https://pp.yourstudio.com/oauth/tiktok/callback` (Web platform).
+   - Until TikTok reviews the app, use **Sandbox** mode and add your TikTok account as a **target user**.
 3. Copy the **client key** and **client secret** into `TIKTOK_CLIENT_KEY` and `TIKTOK_CLIENT_SECRET`, restart, then click **Connect**.
 
 Things to know about TikTok:
@@ -212,6 +230,8 @@ All settings are environment variables, read from `.env` (native) or passed in b
 | `INBOX_HOST_PATH` | — | (Docker) Absolute host path of the inbox folder; mounted to `/inbox` and used to translate Claude's paths |
 | `PP_PORT` | `4000` | (Docker) Port on 127.0.0.1 for the UI, API and MCP |
 | `POWERPOSTER_SECRET_KEY` | generated | Key that encrypts platform tokens (base64, 32 bytes). If empty, one is generated into `<data>/secret.key`. Create one with `powerposter keygen` |
+| `NGROK_DOMAIN` | — | ngrok static domain; PowerPoster starts ngrok and uses it as `PUBLIC_BASE_URL` |
+| `NGROK_AUTOSTART` | `true` | Set to `false` to run ngrok yourself (Docker sets this) |
 | `PUBLIC_BASE_URL` | — | HTTPS URL of the tunnel, used for OAuth redirect URIs |
 | `TUNNEL_TOKEN` | — | Cloudflare tunnel token (Docker `tunnel` profile) |
 | `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET` | — | Meta app credentials |

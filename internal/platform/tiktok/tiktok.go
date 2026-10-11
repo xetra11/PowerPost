@@ -4,6 +4,8 @@ package tiktok
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -191,13 +193,20 @@ func (a *Adapter) ReviewNotices(raw json.RawMessage) []string {
 
 // ---- Auth ----
 
-func (a *Adapter) AuthorizeURL(state, redirectURI string) string {
+// AuthorizeURL uses PKCE, which TikTok requires for desktop (localhost) redirects.
+// Unlike RFC 7636, TikTok expects the challenge as a hex-encoded SHA-256.
+func (a *Adapter) AuthorizeURL(state, redirectURI, verifier string) string {
 	q := url.Values{
 		"client_key":    {a.ClientKey},
 		"response_type": {"code"},
 		"scope":         {"user.info.basic,video.publish,video.upload"},
 		"redirect_uri":  {redirectURI},
 		"state":         {state},
+	}
+	if verifier != "" {
+		sum := sha256.Sum256([]byte(verifier))
+		q.Set("code_challenge", hex.EncodeToString(sum[:]))
+		q.Set("code_challenge_method", "S256")
 	}
 	return a.AuthBase + "/v2/auth/authorize/?" + q.Encode()
 }
@@ -215,14 +224,18 @@ type tokenResponse struct {
 	ErrorDescription string `json:"error_description"`
 }
 
-func (a *Adapter) Exchange(ctx context.Context, code, redirectURI string) (platform.TokenSet, error) {
-	ts, err := a.token(ctx, url.Values{
+func (a *Adapter) Exchange(ctx context.Context, code, redirectURI, verifier string) (platform.TokenSet, error) {
+	form := url.Values{
 		"client_key":    {a.ClientKey},
 		"client_secret": {a.ClientSecret},
 		"code":          {code},
 		"grant_type":    {"authorization_code"},
 		"redirect_uri":  {redirectURI},
-	})
+	}
+	if verifier != "" {
+		form.Set("code_verifier", verifier)
+	}
+	ts, err := a.token(ctx, form)
 	if err != nil {
 		return ts, fmt.Errorf("code exchange: %w", err)
 	}
@@ -509,3 +522,7 @@ func (a *Adapter) MissingSettings() []string {
 	}
 	return m
 }
+
+// AllowsLocalRedirect implements platform.LocalRedirector: TikTok accepts
+// http://localhost redirect URIs for apps registered with the Desktop platform.
+func (a *Adapter) AllowsLocalRedirect() bool { return true }

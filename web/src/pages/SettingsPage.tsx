@@ -112,6 +112,7 @@ export default function SettingsPage() {
                           Redirect URI to register: <code>{p.redirectUri}</code>
                         </small>
                       )}
+                      {p.canImportToken && !p.connected && <TokenForm platform={p} onDone={load} onError={setError} />}
                     </td>
                     <td className="right">
                       <div className="actions">
@@ -249,5 +250,37 @@ export default function SettingsPage() {
         </article>
       )}
     </>
+  )
+}
+
+/** Connect with a token generated in the platform's developer dashboard (no tunnel needed). */
+function TokenForm({ platform, onDone, onError }: { platform: Platform; onDone: () => void; onError: (msg: string) => void }) {
+  const [token, setToken] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    setBusy(true)
+    try {
+      await api.importToken(platform.id, token)
+      setToken('')
+      onDone()
+    } catch (e) {
+      onError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <details className="token-form">
+      <summary>Or paste an access token</summary>
+      <small className="hint">
+        Meta dashboard → your app → Instagram → API setup with Instagram login → <em>Generate access tokens</em> → add your account → Generate. No tunnel needed.
+      </small>
+      <div className="code-row">
+        <input type="password" placeholder="Access token" value={token} onChange={(e) => setToken(e.target.value)} aria-label={`${platform.displayName} access token`} />
+        <button className="small" onClick={submit} disabled={!token.trim() || busy} aria-busy={busy}>
+          Save token
+        </button>
+      </div>
+    </details>
   )
 }

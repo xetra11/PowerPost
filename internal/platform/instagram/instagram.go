@@ -113,7 +113,7 @@ func (a *Adapter) ReviewNotices(json.RawMessage) []string { return nil }
 
 // ---- Auth ----
 
-func (a *Adapter) AuthorizeURL(state, redirectURI string) string {
+func (a *Adapter) AuthorizeURL(state, redirectURI, _ string) string {
 	q := url.Values{
 		"enable_fb_login":      {"0"},
 		"force_authentication": {"1"},
@@ -134,7 +134,7 @@ type shortToken struct {
 	Permissions any         `json:"permissions"`
 }
 
-func (a *Adapter) Exchange(ctx context.Context, code, redirectURI string) (platform.TokenSet, error) {
+func (a *Adapter) Exchange(ctx context.Context, code, redirectURI, _ string) (platform.TokenSet, error) {
 	form := url.Values{
 		"client_id":     {a.AppID},
 		"client_secret": {a.AppSecret},
@@ -376,4 +376,27 @@ func (a *Adapter) MissingSettings() []string {
 		m = append(m, "INSTAGRAM_APP_SECRET")
 	}
 	return m
+}
+
+// ImportToken implements platform.TokenImporter for tokens generated in the
+// Meta dashboard ("Generate access tokens"). Those are long-lived (~60 days)
+// and are refreshed automatically like OAuth tokens.
+func (a *Adapter) ImportToken(ctx context.Context, accessToken string) (platform.TokenSet, error) {
+	var me struct {
+		UserID   string `json:"user_id"`
+		Username string `json:"username"`
+	}
+	if err := a.graphGet(ctx, accessToken, "/me", url.Values{"fields": {"user_id,username"}}, &me); err != nil {
+		return platform.TokenSet{}, fmt.Errorf("Instagram rejected the token: %w", err)
+	}
+	if me.UserID == "" {
+		return platform.TokenSet{}, fmt.Errorf("token does not belong to an Instagram professional account")
+	}
+	return platform.TokenSet{
+		AccessToken: accessToken,
+		ExpiresAt:   time.Now().Add(60 * 24 * time.Hour),
+		AccountID:   me.UserID,
+		AccountName: me.Username,
+		Scopes:      "instagram_business_basic,instagram_business_content_publish",
+	}, nil
 }

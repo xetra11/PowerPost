@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"powerposter/internal/app"
+	"powerposter/internal/platform"
 	"powerposter/internal/testutil"
 )
 
@@ -243,5 +244,38 @@ func TestSettings(t *testing.T) {
 	s.DefaultPlatforms = []string{"nope"}
 	if _, err := a.SaveSettings(ctx, s); app.KindOf(err) != app.KindInvalid {
 		t.Fatalf("unknown platform accepted: %v", err)
+	}
+}
+
+// localFake is a platform that accepts http://localhost OAuth redirects (like TikTok).
+type localFake struct{ *testutil.FakeAdapter }
+
+func (localFake) AllowsLocalRedirect() bool { return true }
+
+func TestLocalRedirectWithoutTunnel(t *testing.T) {
+	a := testutil.NewApp(t, &testutil.FakeAdapter{Name: "remote"})
+	a.Registry = platform.NewRegistry(&testutil.FakeAdapter{Name: "remote"}, localFake{&testutil.FakeAdapter{Name: "local"}})
+	a.Cfg.PublicBaseURL = ""
+	ctx := context.Background()
+
+	list, err := a.Platforms(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]app.PlatformView{}
+	for _, p := range list {
+		byID[p.ID] = p
+	}
+	if p := byID["local"]; p.RedirectURI != "http://localhost:4000/oauth/local/callback" || len(p.MissingSettings) != 0 {
+		t.Fatalf("local platform: %q missing %v", p.RedirectURI, p.MissingSettings)
+	}
+	if p := byID["remote"]; p.RedirectURI != "" || strings.Join(p.MissingSettings, ",") != "PUBLIC_BASE_URL" {
+		t.Fatalf("remote platform: %q missing %v", p.RedirectURI, p.MissingSettings)
+	}
+	if _, err := a.StartConnect(ctx, "local"); err != nil {
+		t.Fatalf("local connect: %v", err)
+	}
+	if _, err := a.StartConnect(ctx, "remote"); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("remote connect without tunnel: %v", err)
 	}
 }

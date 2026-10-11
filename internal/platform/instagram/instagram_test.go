@@ -139,10 +139,10 @@ func TestPublishReelRejected(t *testing.T) {
 func TestExchangeAndRefresh(t *testing.T) {
 	srv, _ := fakeGraph(t, func(int) string { return "FINISHED" })
 	a := newTestAdapter(srv.URL)
-	if u := a.AuthorizeURL("st", "https://x/cb"); !strings.Contains(u, "instagram_business_content_publish") || !strings.Contains(u, "state=st") {
+	if u := a.AuthorizeURL("st", "https://x/cb", ""); !strings.Contains(u, "instagram_business_content_publish") || !strings.Contains(u, "state=st") {
 		t.Fatalf("authorize url %s", u)
 	}
-	ts, err := a.Exchange(context.Background(), "the-code", "https://x/cb")
+	ts, err := a.Exchange(context.Background(), "the-code", "https://x/cb", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,19 @@ func TestExchangeAndRefresh(t *testing.T) {
 	if err != nil || fresh.AccessToken != "refreshed" || fresh.AccountID != "17841" {
 		t.Fatalf("refresh: %+v %v", fresh, err)
 	}
-	if _, err := a.Exchange(context.Background(), "wrong", "https://x/cb"); err == nil || !strings.Contains(err.Error(), "bad code") {
+	if _, err := a.Exchange(context.Background(), "wrong", "https://x/cb", ""); err == nil || !strings.Contains(err.Error(), "bad code") {
 		t.Fatalf("expected readable error, got %v", err)
+	}
+}
+
+func TestImportToken(t *testing.T) {
+	srv, _ := fakeGraph(t, func(int) string { return "FINISHED" })
+	a := newTestAdapter(srv.URL)
+	ts, err := a.ImportToken(context.Background(), "dashboard-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ts.AccessToken != "dashboard-token" || ts.AccountID != "17841" || ts.AccountName != "donnervolk" || time.Until(ts.ExpiresAt) < 59*24*time.Hour {
+		t.Fatalf("unexpected token %+v", ts)
 	}
 }

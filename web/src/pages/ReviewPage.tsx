@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, describeMedia, type Attempt, type Platform, type Post, type Target } from '../api'
 import { CopyButton, ErrorBanner, IssueList, StatusBadge } from '../components/common'
+import { PhonePreview, type PreviewMode } from '../components/PhonePreview'
 import { usePolling } from '../usePolling'
 
 const busy = (p: Post | null) =>
@@ -13,13 +14,37 @@ export default function ReviewPage() {
   const id = Number(useParams().id)
   const { data: post, setData: setPost, error: loadError } = usePolling(() => api.post(id), 1500, busy)
   const [platforms, setPlatforms] = useState<Platform[]>([])
-  const [safeZones, setSafeZones] = useState(false)
+  const [mode, setModeState] = useState<PreviewMode>(loadMode)
+  const setMode = (m: PreviewMode) => {
+    setModeState(m)
+    try {
+      localStorage.setItem('pp.previewMode', m)
+    } catch {
+      /* storage unavailable */
+    }
+  }
+  const [handles, setHandles] = useState<Record<string, string>>({})
   const [working, setWorking] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [attempts, setAttempts] = useState<Attempt[]>([])
 
   useEffect(() => {
-    api.platforms().then(setPlatforms).catch((e) => setError(e.message))
+    api
+      .platforms()
+      .then((list) => {
+        setPlatforms(list)
+        // TikTok shows @username; only the live creator info has it.
+        for (const p of list.filter((p) => p.connected && p.id === 'tiktok')) {
+          api
+            .accountInfo(p.id)
+            .then((r) => {
+              const u = r.info?.creator_username
+              if (typeof u === 'string' && u) setHandles((h) => ({ ...h, [p.id]: u }))
+            })
+            .catch(() => {})
+        }
+      })
+      .catch((e) => setError(e.message))
   }, [])
   const status = post?.status
   useEffect(() => {
@@ -61,10 +86,19 @@ export default function ReviewPage() {
             Review: {post.title} <StatusBadge status={post.status} />
           </h2>
         </div>
-        <label className="inline">
-          <input type="checkbox" role="switch" checked={safeZones} onChange={(e) => setSafeZones(e.target.checked)} />
-          Show safe zones
-        </label>
+        <div role="group" className="mode-switch" aria-label="Preview mode">
+          {(
+            [
+              ['simulation', 'App preview'],
+              ['safezones', 'Safe zones'],
+              ['plain', 'Video only'],
+            ] as const
+          ).map(([m, label]) => (
+            <button key={m} className={mode === m ? 'small' : 'small secondary outline'} onClick={() => setMode(m)}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
       <ErrorBanner error={error} onClose={() => setError(null)} />
 
@@ -75,7 +109,8 @@ export default function ReviewPage() {
             post={post}
             target={t}
             platform={platforms.find((p) => p.id === t.platform)}
-            safeZones={safeZones}
+            mode={mode}
+            handle={handles[t.platform]}
             onRetry={post.canPublish && t.status === 'failed' ? () => publish([t.platform]) : undefined}
           />
         ))}
@@ -148,13 +183,15 @@ function ReviewCard({
   post,
   target: t,
   platform,
-  safeZones,
+  mode,
+  handle,
   onRetry,
 }: {
   post: Post
   target: Target
   platform: Platform | undefined
-  safeZones: boolean
+  mode: PreviewMode
+  handle?: string
   onRetry?: () => void
 }) {
   const r = t.rendition
@@ -167,22 +204,15 @@ function ReviewCard({
         <StatusBadge status={t.status} />
       </header>
 
-      <div className="phone">
-        {r?.status === 'ready' ? (
-          <video src={r.url} controls playsInline preload="metadata" />
-        ) : (
-          <div className="phone-placeholder">
-            {r?.status === 'failed' ? 'Conversion failed' : r ? `Converting… ${Math.round(r.progress * 100)}%` : post.asset ? 'Waiting…' : 'No video'}
-          </div>
-        )}
-        {safeZones && (
-          <div className="safe-zones" aria-hidden>
-            <div className="sz-top" />
-            <div className="sz-bottom" />
-            <div className="sz-right" />
-          </div>
-        )}
-      </div>
+      <PhonePreview
+        platform={t.platform}
+        videoUrl={r?.status === 'ready' ? r.url : null}
+        placeholder={r?.status === 'failed' ? 'Conversion failed' : r ? `Converting… ${Math.round(r.progress * 100)}%` : post.asset ? 'Waiting…' : 'No video'}
+        caption={t.finalCaption}
+        username={handle ?? platform?.accountName ?? ''}
+        label={disclosureLabel(t)}
+        mode={mode}
+      />
       {r?.info && <small className="muted">{describeMedia(r.info)}</small>}
 
       {(t.status === 'queued' || t.status === 'publishing') && <p aria-busy="true">{t.stage || 'Waiting…'}</p>}
@@ -241,4 +271,23 @@ function ReviewCard({
       ))}
     </article>
   )
+}
+
+/** The label TikTok puts on commercial posts (shown in the simulated preview). */
+function disclosureLabel(t: Target): string | undefined {
+  const o = t.options
+  if (t.platform !== 'tiktok' || !o.commercial_content) return undefined
+  if (o.brand_content) return 'Paid partnership'
+  if (o.brand_organic) return 'Promotional content'
+  return undefined
+}
+
+function loadMode(): PreviewMode {
+  try {
+    const m = localStorage.getItem('pp.previewMode')
+    if (m === 'simulation' || m === 'safezones' || m === 'plain') return m
+  } catch {
+    /* storage unavailable */
+  }
+  return 'simulation'
 }

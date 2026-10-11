@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"powerposter/internal/platform"
@@ -19,6 +21,7 @@ type PlatformView struct {
 	ExpiresAt       *time.Time           `json:"expiresAt"`
 	RedirectURI     string               `json:"redirectUri"`
 	MissingSettings []string             `json:"missingSettings"` // .env entries needed before Connect works
+	CanImportToken  bool                 `json:"canImportToken"`  // a dashboard-generated token can be pasted instead
 	SupportedKinds  []platform.PostKind  `json:"supportedKinds"`
 	Constraints     platform.Constraints `json:"constraints"`
 	OptionsSchema   any                  `json:"optionsSchema"`
@@ -32,8 +35,9 @@ func (a *App) Platforms(ctx context.Context) ([]PlatformView, error) {
 			ID:              string(ad.ID()),
 			DisplayName:     ad.DisplayName(),
 			Configured:      ad.Configured(),
-			RedirectURI:     a.redirectURI(ad.ID()),
+			RedirectURI:     a.redirectURI(ad),
 			MissingSettings: a.missingSettings(ad),
+			CanImportToken:  isImporter(ad),
 			SupportedKinds:  ad.SupportedKinds(),
 			Constraints:     ad.Constraints(platform.KindVideo),
 			OptionsSchema:   ad.OptionsSchema(),
@@ -55,11 +59,38 @@ func (a *App) Platforms(ctx context.Context) ([]PlatformView, error) {
 	return out, nil
 }
 
-func (a *App) redirectURI(id platform.ID) string {
-	if a.Cfg.PublicBaseURL == "" {
-		return ""
+// redirectURI is where the platform sends the browser after sign-in: the public
+// tunnel URL if configured, otherwise http://localhost for platforms that allow it.
+func (a *App) redirectURI(ad platform.Adapter) string {
+	path := "/oauth/" + string(ad.ID()) + "/callback"
+	if a.Cfg.PublicBaseURL != "" {
+		return a.Cfg.PublicBaseURL + path
 	}
-	return a.Cfg.PublicBaseURL + "/oauth/" + string(id) + "/callback"
+	if allowsLocalRedirect(ad) {
+		return a.localBaseURL() + path
+	}
+	return ""
+}
+
+// localBaseURL is the private listener as http://localhost:<port> (platforms
+// accept "localhost" but often not "127.0.0.1").
+func (a *App) localBaseURL() string {
+	u, err := url.Parse(a.Cfg.BaseURL)
+	if err != nil {
+		return a.Cfg.BaseURL
+	}
+	if h, port := u.Hostname(), u.Port(); h == "127.0.0.1" || h == "::1" {
+		u.Host = "localhost"
+		if port != "" {
+			u.Host += ":" + port
+		}
+	}
+	return strings.TrimRight(u.String(), "/")
+}
+
+func allowsLocalRedirect(ad platform.Adapter) bool {
+	l, ok := ad.(platform.LocalRedirector)
+	return ok && l.AllowsLocalRedirect()
 }
 
 // StartConnect returns the platform's consent URL for the user's browser.
@@ -71,14 +102,15 @@ func (a *App) StartConnect(ctx context.Context, id string) (string, error) {
 	if !ad.Configured() {
 		return "", invalid("%s app credentials are missing. Add them to .env and restart — see README → Connecting platforms", ad.DisplayName())
 	}
-	if a.Cfg.PublicBaseURL == "" {
+	redirect := a.redirectURI(ad)
+	if redirect == "" {
 		return "", invalid("PUBLIC_BASE_URL is not set. %s needs an HTTPS callback URL — see README → Tunnel", ad.DisplayName())
 	}
-	state := randomHex(16)
-	if err := a.Store.SaveOAuthState(ctx, state, id); err != nil {
+	state, verifier := randomHex(16), randomHex(32) // 64 hex chars: a valid PKCE verifier
+	if err := a.Store.SaveOAuthState(ctx, state, id, verifier); err != nil {
 		return "", err
 	}
-	return ad.Auth().AuthorizeURL(state, a.redirectURI(ad.ID())), nil
+	return ad.Auth().AuthorizeURL(state, redirect, verifier), nil
 }
 
 // FinishConnect handles the OAuth callback.
@@ -87,13 +119,35 @@ func (a *App) FinishConnect(ctx context.Context, id, code, state string) error {
 	if !ok {
 		return notFound("unknown platform %q", id)
 	}
-	saved, err := a.Store.TakeOAuthState(ctx, state, 15*time.Minute)
+	saved, verifier, err := a.Store.TakeOAuthState(ctx, state, 15*time.Minute)
 	if err != nil || saved != id {
 		return invalid("the sign-in link expired or was already used; start again from Settings")
 	}
-	ts, err := ad.Auth().Exchange(ctx, code, a.redirectURI(ad.ID()))
+	ts, err := ad.Auth().Exchange(ctx, code, a.redirectURI(ad), verifier)
 	if err != nil {
 		return fmt.Errorf("%s sign-in failed: %w", ad.DisplayName(), err)
+	}
+	return a.saveToken(ctx, id, ts)
+}
+
+// ImportToken connects a platform with an access token the user generated in
+// the platform's developer dashboard (no OAuth redirect or public URL needed).
+func (a *App) ImportToken(ctx context.Context, id, accessToken string) error {
+	ad, ok := a.Registry.Get(platform.ID(id))
+	if !ok {
+		return notFound("unknown platform %q", id)
+	}
+	imp, ok := ad.(platform.TokenImporter)
+	if !ok {
+		return invalid("%s does not support pasting an access token; use Connect", ad.DisplayName())
+	}
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return invalid("access token is empty")
+	}
+	ts, err := imp.ImportToken(ctx, accessToken)
+	if err != nil {
+		return invalid("%v", err)
 	}
 	return a.saveToken(ctx, id, ts)
 }
@@ -215,8 +269,13 @@ func (a *App) missingSettings(ad platform.Adapter) []string {
 	} else if !ad.Configured() {
 		m = append(m, "app credentials")
 	}
-	if a.Cfg.PublicBaseURL == "" {
+	if a.redirectURI(ad) == "" {
 		m = append(m, "PUBLIC_BASE_URL")
 	}
 	return m
+}
+
+func isImporter(ad platform.Adapter) bool {
+	_, ok := ad.(platform.TokenImporter)
+	return ok
 }

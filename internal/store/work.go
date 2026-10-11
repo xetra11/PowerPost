@@ -230,23 +230,23 @@ func (s *Store) DeleteConnection(ctx context.Context, platform string) error {
 	return err
 }
 
-func (s *Store) SaveOAuthState(ctx context.Context, state, platform string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO oauth_states (state, platform, created_at) VALUES (?, ?, ?)`, state, platform, now())
+func (s *Store) SaveOAuthState(ctx context.Context, state, platform, verifier string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO oauth_states (state, platform, verifier, created_at) VALUES (?, ?, ?, ?)`, state, platform, verifier, now())
 	return err
 }
 
-// TakeOAuthState consumes a state value; it must be younger than maxAge.
-func (s *Store) TakeOAuthState(ctx context.Context, state string, maxAge time.Duration) (string, error) {
-	var platform, created string
-	err := s.db.QueryRowContext(ctx, `DELETE FROM oauth_states WHERE state = ? RETURNING platform, created_at`, state).Scan(&platform, &created)
+// TakeOAuthState consumes a state value (younger than maxAge) and returns its platform and PKCE verifier.
+func (s *Store) TakeOAuthState(ctx context.Context, state string, maxAge time.Duration) (platform, verifier string, err error) {
+	var created string
+	err = s.db.QueryRowContext(ctx, `DELETE FROM oauth_states WHERE state = ? RETURNING platform, verifier, created_at`, state).Scan(&platform, &verifier, &created)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
+		return "", "", ErrNotFound
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if time.Since(parseTime(created)) > maxAge {
-		return "", ErrNotFound
+		return "", "", ErrNotFound
 	}
-	return platform, nil
+	return platform, verifier, nil
 }

@@ -49,6 +49,7 @@ func (s *Server) PrivateHandler() http.Handler {
 	mux.HandleFunc("GET /api/platforms", s.platforms)
 	mux.HandleFunc("GET /api/platforms/{platform}/account-info", s.accountInfo)
 	mux.HandleFunc("POST /api/connections/{platform}/start", s.startConnect)
+	mux.HandleFunc("POST /api/connections/{platform}/token", s.importToken)
 	mux.HandleFunc("DELETE /api/connections/{platform}", s.disconnect)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.saveSettings)
@@ -232,6 +233,17 @@ func (s *Server) accountInfo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) startConnect(w http.ResponseWriter, r *http.Request) {
 	u, err := s.App.StartConnect(r.Context(), r.PathValue("platform"))
 	s.respond(w, map[string]string{"url": u}, err)
+}
+
+func (s *Server) importToken(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AccessToken string `json:"accessToken"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	err := s.App.ImportToken(r.Context(), r.PathValue("platform"), in.AccessToken)
+	s.respond(w, map[string]bool{"connected": err == nil}, err)
 }
 
 func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,10 @@ func fakeAPI(t *testing.T, f *fake) *httptest.Server {
 		envelope(w, map[string]any{"status": "PUBLISH_COMPLETE", "publicaly_available_post_id": []any{7123456789}})
 	})
 	mux.HandleFunc("POST /v2/oauth/token/", func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("code") == "c" && r.FormValue("code_verifier") != "verifier-123" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_request", "error_description": "code_verifier missing"})
+			return
+		}
 		if r.FormValue("code") == "bad" {
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant", "error_description": "Authorization code is expired."})
 			return
@@ -204,11 +209,30 @@ func TestValidate(t *testing.T) {
 
 func TestExchange(t *testing.T) {
 	a := newTestAdapter(fakeAPI(t, &fake{}).URL)
-	ts, err := a.Exchange(context.Background(), "c", "https://x/cb")
+	ts, err := a.Exchange(context.Background(), "c", "https://x/cb", "verifier-123")
 	if err != nil || ts.AccessToken != "tok" || ts.RefreshToken != "rt" || ts.AccountName != "Donnervolk" || ts.AccountID != "o1" {
 		t.Fatalf("%+v %v", ts, err)
 	}
-	if _, err := a.Exchange(context.Background(), "bad", "https://x/cb"); err == nil || !strings.Contains(err.Error(), "expired") {
+	if _, err := a.Exchange(context.Background(), "bad", "https://x/cb", ""); err == nil || !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expected readable error, got %v", err)
+	}
+}
+
+func TestAuthorizeURLUsesHexPKCE(t *testing.T) {
+	a := New("key", "secret")
+	u, err := url.Parse(a.AuthorizeURL("st", "http://localhost:4000/oauth/tiktok/callback", "abc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query()
+	// sha256("abc") in hex — TikTok's PKCE variant.
+	if q.Get("code_challenge") != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" || q.Get("code_challenge_method") != "S256" {
+		t.Fatalf("challenge %q method %q", q.Get("code_challenge"), q.Get("code_challenge_method"))
+	}
+	if q.Get("redirect_uri") != "http://localhost:4000/oauth/tiktok/callback" || q.Get("state") != "st" {
+		t.Fatalf("query %v", q)
+	}
+	if !a.AllowsLocalRedirect() {
+		t.Fatal("TikTok should allow localhost redirects")
 	}
 }

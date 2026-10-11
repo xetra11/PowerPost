@@ -13,12 +13,26 @@ services:
       PP_BASE_URL: http://127.0.0.1:${PP_PORT:-4000}
       # Lets Claude pass host paths (C:\...\inbox\clip.mp4); the app maps them to /inbox.
       PP_INBOX_HOST_PATH: ${INBOX_HOST_PATH:-}
+      NGROK_AUTOSTART: "false" # in Docker the ngrok service below runs the tunnel
     ports:
       - "127.0.0.1:${PP_PORT:-4000}:4000" # UI + API + MCP, reachable from this machine only
       # 4001 (OAuth callbacks) is intentionally not published — only the tunnel reaches it.
     volumes:
       - powerposter-data:/data # database, converted videos, secret key
       - ${INBOX_HOST_PATH:-./inbox}:/inbox # drop folder shared with you and Claude
+
+  # Optional: ngrok tunnel for OAuth callbacks (free static domain). Needs NGROK_DOMAIN and
+  # NGROK_AUTHTOKEN in .env. Start with `docker compose --profile ngrok up -d`.
+  ngrok:
+    image: ngrok/ngrok:3
+    profiles: ["ngrok"]
+    restart: unless-stopped
+    command: ["http", "powerposter:4001", "--url", "https://${NGROK_DOMAIN:-missing.ngrok-free.dev}"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    depends_on:
+      powerposter:
+        condition: service_healthy
 
   # Optional: HTTPS tunnel for OAuth callbacks. Start with `docker compose --profile tunnel up -d`.
   # In the Cloudflare dashboard route your hostname to http://powerposter:4001

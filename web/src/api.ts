@@ -107,6 +107,7 @@ export interface Platform {
   expiresAt: string | null
   redirectUri: string
   missingSettings: string[]
+  canImportToken: boolean
   constraints: { caption: { maxChars: number; countUtf16: boolean } }
   optionsSchema: { properties: Record<string, SchemaProp> }
 }
@@ -166,6 +167,7 @@ export const api = {
   accountInfo: (platform: string) => request<{ info: Record<string, unknown> | null }>('GET', `/api/platforms/${platform}/account-info`),
   startConnect: (platform: string) => request<{ url: string }>('POST', `/api/connections/${platform}/start`, {}),
   disconnect: (platform: string) => request<unknown>('DELETE', `/api/connections/${platform}`),
+  importToken: (platform: string, accessToken: string) => request<unknown>('POST', `/api/connections/${platform}/token`, { accessToken }),
   settings: () => request<Settings>('GET', '/api/settings'),
   saveSettings: (s: Settings) => request<Settings>('PUT', '/api/settings', s),
 }

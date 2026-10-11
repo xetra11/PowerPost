@@ -123,7 +123,7 @@ func TestOAuthCallback(t *testing.T) {
 	if rec.Code != http.StatusFound || !strings.Contains(rec.Header().Get("Location"), "connect_error=") {
 		t.Fatalf("bad state: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
-	if err := s.App.Store.SaveOAuthState(t.Context(), "good", "fake"); err != nil {
+	if err := s.App.Store.SaveOAuthState(t.Context(), "good", "fake", ""); err != nil {
 		t.Fatal(err)
 	}
 	rec = do(pub, "GET", "/oauth/fake/callback?code=c&state=good", nil, nil)

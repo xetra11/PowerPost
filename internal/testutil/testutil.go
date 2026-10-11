@@ -91,10 +91,10 @@ func (f *FakeAdapter) PublishedCount() int {
 
 type fakeAuth struct{}
 
-func (fakeAuth) AuthorizeURL(state, redirectURI string) string {
+func (fakeAuth) AuthorizeURL(state, redirectURI, verifier string) string {
 	return "https://fake/auth?state=" + state
 }
-func (fakeAuth) Exchange(context.Context, string, string) (platform.TokenSet, error) {
+func (fakeAuth) Exchange(context.Context, string, string, string) (platform.TokenSet, error) {
 	return platform.TokenSet{AccessToken: "fake-token", AccountName: "Fake Account", ExpiresAt: time.Now().Add(24 * time.Hour)}, nil
 }
 func (fakeAuth) Refresh(_ context.Context, t platform.TokenSet) (platform.TokenSet, error) {
@@ -169,7 +169,7 @@ func Connect(t *testing.T, a *app.App, platformID string) {
 	if _, err := a.StartConnect(ctx, platformID); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Store.SaveOAuthState(ctx, "state-"+platformID, platformID); err != nil {
+	if err := a.Store.SaveOAuthState(ctx, "state-"+platformID, platformID, "verifier"); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.FinishConnect(ctx, platformID, "code", "state-"+platformID); err != nil {

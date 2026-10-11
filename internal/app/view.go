@@ -150,11 +150,13 @@ func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.P
 		issues = append(issues, platform.ValidationIssue{Platform: id, Severity: sev, Scope: scope, Code: code, Message: msg, AutoFix: fix})
 	}
 
-	// Account
-	if !ad.Configured() {
-		add(platform.SeverityError, platform.ScopeAccount, "NOT_CONFIGURED", fmt.Sprintf("%s app credentials are missing in .env — see README → Connecting platforms.", ad.DisplayName()), "")
-	} else if conn, err := a.Store.GetConnection(ctx, string(id)); errors.Is(err, store.ErrNotFound) {
-		add(platform.SeverityError, platform.ScopeAccount, "NOT_CONNECTED", fmt.Sprintf("Connect your %s account in Settings.", ad.DisplayName()), "")
+	// Account (a pasted token works without app credentials)
+	if conn, err := a.Store.GetConnection(ctx, string(id)); errors.Is(err, store.ErrNotFound) {
+		if ad.Configured() || isImporter(ad) {
+			add(platform.SeverityError, platform.ScopeAccount, "NOT_CONNECTED", fmt.Sprintf("Connect your %s account in Settings.", ad.DisplayName()), "")
+		} else {
+			add(platform.SeverityError, platform.ScopeAccount, "NOT_CONFIGURED", fmt.Sprintf("%s app credentials are missing in .env — see README → Connecting platforms.", ad.DisplayName()), "")
+		}
 	} else if err == nil && conn.RefreshExpiresAt != nil && time.Now().After(*conn.RefreshExpiresAt) {
 		add(platform.SeverityError, platform.ScopeAccount, "CONNECTION_EXPIRED", fmt.Sprintf("Your %s connection expired. Reconnect it in Settings.", ad.DisplayName()), "")
 	} else if err == nil && conn.RefreshExpiresAt == nil && conn.ExpiresAt != nil && time.Now().After(*conn.ExpiresAt) {

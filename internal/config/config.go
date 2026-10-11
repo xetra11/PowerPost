@@ -22,6 +22,10 @@ type Config struct {
 	BaseURL       string // how the user's browser reaches the private listener
 	PublicBaseURL string // https URL of the tunnel, used for OAuth redirect URIs
 
+	NgrokDomain    string // e.g. name.ngrok-free.dev; sets PublicBaseURL if that is empty
+	NgrokAutostart bool   // start the ngrok agent with the server (native runs)
+	NgrokPath      string
+
 	SecretKey string // base64, 32 bytes
 
 	InstagramAppID      string
@@ -49,6 +53,9 @@ func Load() (Config, error) {
 		PublicAddr:          env("PP_PUBLIC_ADDR", "127.0.0.1:4001"),
 		BaseURL:             strings.TrimRight(env("PP_BASE_URL", "http://127.0.0.1:4000"), "/"),
 		PublicBaseURL:       strings.TrimRight(env("PUBLIC_BASE_URL", ""), "/"),
+		NgrokDomain:         strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(env("NGROK_DOMAIN", ""), "https://"), "http://"), "/"),
+		NgrokAutostart:      env("NGROK_AUTOSTART", "true") == "true",
+		NgrokPath:           env("NGROK_PATH", "ngrok"),
 		SecretKey:           env("POWERPOSTER_SECRET_KEY", ""),
 		InstagramAppID:      env("INSTAGRAM_APP_ID", ""),
 		InstagramAppSecret:  env("INSTAGRAM_APP_SECRET", ""),
@@ -58,6 +65,10 @@ func Load() (Config, error) {
 		FFmpegPath:          env("FFMPEG_PATH", "ffmpeg"),
 		FFprobePath:         env("FFPROBE_PATH", "ffprobe"),
 		FFmpegEncoder:       env("FFMPEG_ENCODER", "libx264"),
+	}
+
+	if c.PublicBaseURL == "" && c.NgrokDomain != "" {
+		c.PublicBaseURL = "https://" + c.NgrokDomain
 	}
 
 	n, err := strconv.Atoi(env("MAX_PARALLEL_ENCODES", "1"))

@@ -12,7 +12,7 @@ export default function App() {
           <ul>
             <li>
               <NavLink to="/" className="brand">
-                <img src="/favicon.svg" alt="" width={24} height={24} /> PowerPoster
+                <img src="/logo-192.png" alt="" width={28} height={28} /> PowerPoster
               </NavLink>
             </li>
           </ul>

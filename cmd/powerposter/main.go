@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"powerposter/internal/platform/tiktok"
 	"powerposter/internal/secret"
 	"powerposter/internal/store"
+	"powerposter/internal/tunnel"
 	"powerposter/internal/webui"
 )
 
@@ -103,6 +105,19 @@ func serve() error {
 			}
 		}()
 	}
+	tunnelDone := make(chan struct{})
+	if cfg.NgrokDomain != "" && cfg.NgrokAutostart {
+		target := cfg.PublicAddr
+		if strings.HasPrefix(target, ":") {
+			target = "127.0.0.1" + target
+		}
+		go func() {
+			tunnel.Ngrok{Path: cfg.NgrokPath, Domain: cfg.NgrokDomain, Target: target, Log: log}.Run(ctx)
+			close(tunnelDone)
+		}()
+	} else {
+		close(tunnelDone)
+	}
 	workersDone := make(chan struct{})
 	go func() {
 		a.Run(ctx)
@@ -110,6 +125,9 @@ func serve() error {
 	}()
 
 	log.Info("PowerPoster is running", "ui", cfg.BaseURL, "mcp", cfg.BaseURL+"/mcp", "inbox", cfg.InboxHostPath)
+	if cfg.PublicBaseURL != "" {
+		log.Info("OAuth callbacks", "public", cfg.PublicBaseURL)
+	}
 
 	select {
 	case <-ctx.Done():
@@ -121,6 +139,7 @@ func serve() error {
 	defer cancel()
 	_ = private.Shutdown(shutdownCtx)
 	_ = public.Shutdown(shutdownCtx)
+	<-tunnelDone
 	select {
 	case <-workersDone:
 	case <-shutdownCtx.Done():
