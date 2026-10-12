@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
 	"time"
 
@@ -145,47 +144,20 @@ func KindOf(err error) ErrorKind {
 
 // ---- Settings ----
 
-type Brand struct {
-	GameName        string   `json:"gameName"`
-	Link            string   `json:"link"`
-	DefaultHashtags []string `json:"defaultHashtags"`
-	ToneNotes       string   `json:"toneNotes"`
-}
-
+// Settings apply to all projects. Brand and post defaults are per project (ProjectSettings).
 type Settings struct {
-	Brand            Brand    `json:"brand"`
-	DefaultPlatforms []string `json:"defaultPlatforms"`
-	DefaultAspect    string   `json:"defaultAspect"`
-	MCPAllowPublish  bool     `json:"mcpAllowPublish"`
+	MCPAllowPublish bool `json:"mcpAllowPublish"`
 }
 
 const settingsKey = "settings"
 
 func (a *App) GetSettings(ctx context.Context) (Settings, error) {
-	s := Settings{DefaultAspect: string(media.StrategyBlur)}
-	for _, ad := range a.Registry.All() {
-		s.DefaultPlatforms = append(s.DefaultPlatforms, string(ad.ID()))
-	}
-	if _, err := a.Store.GetSetting(ctx, settingsKey, &s); err != nil {
-		return s, err
-	}
-	if s.Brand.DefaultHashtags == nil {
-		s.Brand.DefaultHashtags = []string{}
-	}
-	return s, nil
+	var s Settings
+	_, err := a.Store.GetSetting(ctx, settingsKey, &s)
+	return s, err
 }
 
 func (a *App) SaveSettings(ctx context.Context, s Settings) (Settings, error) {
-	if !media.Strategy(s.DefaultAspect).Valid() {
-		return s, invalid("defaultAspect must be blur, crop or pad")
-	}
-	for _, p := range s.DefaultPlatforms {
-		if _, ok := a.Registry.Get(platform.ID(p)); !ok {
-			return s, invalid("unknown platform %q", p)
-		}
-	}
-	s.Brand.DefaultHashtags = platform.NormalizeHashtags(s.Brand.DefaultHashtags)
-	s.DefaultPlatforms = slices.Compact(s.DefaultPlatforms)
 	return s, a.Store.SetSetting(ctx, settingsKey, s)
 }
 

@@ -10,6 +10,9 @@
 header.container nav { padding-block: 0.25rem; }
 .brand { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 700; text-decoration: none; }
 nav a.active:not(.brand) { font-weight: 700; text-decoration: underline; text-underline-offset: 6px; }
+.project-switch { margin: 0; width: auto; min-width: 10rem; padding-block: 0.3rem; font-size: 0.9rem; }
+.project-list td { vertical-align: middle; }
+.project-list .current { font-weight: 700; }
 
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
 .page-head h2 { margin: 0.25rem 0 0; }

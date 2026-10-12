@@ -4,6 +4,7 @@ import { api, describeMedia, type Attempt, type Platform, type Post, type Stats,
 import { CopyButton, ErrorBanner, IssueList, StatusBadge } from '../components/common'
 import { PhonePreview, type PreviewMode } from '../components/PhonePreview'
 import { usePolling } from '../usePolling'
+import { useFollowProject } from '../project'
 
 const busy = (p: Post | null) =>
   !!p &&
@@ -30,15 +31,18 @@ export default function ReviewPage() {
   const [error, setError] = useState<string | null>(null)
   const [attempts, setAttempts] = useState<Attempt[]>([])
 
+  const projectId = post?.projectId
+  useFollowProject(projectId)
   useEffect(() => {
+    if (!projectId) return
     api
-      .platforms()
+      .platforms(projectId)
       .then((list) => {
         setPlatforms(list)
         // TikTok shows @username; only the live creator info has it.
         for (const p of list.filter((p) => p.connected && p.id === 'tiktok')) {
           api
-            .accountInfo(p.id)
+            .accountInfo(projectId, p.id)
             .then((r) => {
               const u = r.info?.creator_username
               if (typeof u === 'string' && u) setHandles((h) => ({ ...h, [p.id]: u }))
@@ -47,7 +51,7 @@ export default function ReviewPage() {
         }
       })
       .catch((e) => setError(e.message))
-  }, [])
+  }, [projectId])
   const status = post?.status
   useEffect(() => {
     api.attempts(id).then(setAttempts).catch(() => {})

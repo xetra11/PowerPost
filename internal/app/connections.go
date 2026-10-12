@@ -28,7 +28,10 @@ type PlatformView struct {
 	DefaultOptions  any                  `json:"defaultOptions"`
 }
 
-func (a *App) Platforms(ctx context.Context) ([]PlatformView, error) {
+func (a *App) Platforms(ctx context.Context, projectID int64) ([]PlatformView, error) {
+	if _, err := a.project(ctx, projectID); err != nil {
+		return nil, err
+	}
 	out := []PlatformView{}
 	for _, ad := range a.Registry.All() {
 		pv := PlatformView{
@@ -43,7 +46,7 @@ func (a *App) Platforms(ctx context.Context) ([]PlatformView, error) {
 			OptionsSchema:   ad.OptionsSchema(),
 			DefaultOptions:  ad.DefaultOptions(),
 		}
-		conn, err := a.Store.GetConnection(ctx, string(ad.ID()))
+		conn, err := a.Store.GetConnection(ctx, projectID, string(ad.ID()))
 		if err == nil {
 			pv.Connected = true
 			pv.AccountName = conn.AccountName
@@ -94,7 +97,10 @@ func allowsLocalRedirect(ad platform.Adapter) bool {
 }
 
 // StartConnect returns the platform's consent URL for the user's browser.
-func (a *App) StartConnect(ctx context.Context, id string) (string, error) {
+func (a *App) StartConnect(ctx context.Context, projectID int64, id string) (string, error) {
+	if _, err := a.project(ctx, projectID); err != nil {
+		return "", err
+	}
 	ad, ok := a.Registry.Get(platform.ID(id))
 	if !ok {
 		return "", notFound("unknown platform %q", id)
@@ -107,32 +113,39 @@ func (a *App) StartConnect(ctx context.Context, id string) (string, error) {
 		return "", invalid("PUBLIC_BASE_URL is not set. %s needs an HTTPS callback URL — see README → Tunnel", ad.DisplayName())
 	}
 	state, verifier := randomHex(16), randomHex(32) // 64 hex chars: a valid PKCE verifier
-	if err := a.Store.SaveOAuthState(ctx, state, id, verifier); err != nil {
+	if err := a.Store.SaveOAuthState(ctx, state, store.OAuthState{ProjectID: projectID, Platform: id, Verifier: verifier}); err != nil {
 		return "", err
 	}
 	return ad.Auth().AuthorizeURL(state, redirect, verifier), nil
 }
 
-// FinishConnect handles the OAuth callback.
-func (a *App) FinishConnect(ctx context.Context, id, code, state string) error {
+// FinishConnect handles the OAuth callback and returns the project the
+// account was connected to (0 if the state was unknown).
+func (a *App) FinishConnect(ctx context.Context, id, code, state string) (int64, error) {
 	ad, ok := a.Registry.Get(platform.ID(id))
 	if !ok {
-		return notFound("unknown platform %q", id)
+		return 0, notFound("unknown platform %q", id)
 	}
-	saved, verifier, err := a.Store.TakeOAuthState(ctx, state, 15*time.Minute)
-	if err != nil || saved != id {
-		return invalid("the sign-in link expired or was already used; start again from Settings")
+	saved, err := a.Store.TakeOAuthState(ctx, state, 15*time.Minute)
+	if err != nil || saved.Platform != id {
+		return 0, invalid("the sign-in link expired or was already used; start again from Settings")
 	}
-	ts, err := ad.Auth().Exchange(ctx, code, a.redirectURI(ad), verifier)
+	if _, err := a.project(ctx, saved.ProjectID); err != nil {
+		return 0, err
+	}
+	ts, err := ad.Auth().Exchange(ctx, code, a.redirectURI(ad), saved.Verifier)
 	if err != nil {
-		return fmt.Errorf("%s sign-in failed: %w", ad.DisplayName(), err)
+		return saved.ProjectID, fmt.Errorf("%s sign-in failed: %w", ad.DisplayName(), err)
 	}
-	return a.saveToken(ctx, id, ts)
+	return saved.ProjectID, a.saveToken(ctx, saved.ProjectID, id, ts)
 }
 
 // ImportToken connects a platform with an access token the user generated in
 // the platform's developer dashboard (no OAuth redirect or public URL needed).
-func (a *App) ImportToken(ctx context.Context, id, accessToken string) error {
+func (a *App) ImportToken(ctx context.Context, projectID int64, id, accessToken string) error {
+	if _, err := a.project(ctx, projectID); err != nil {
+		return err
+	}
 	ad, ok := a.Registry.Get(platform.ID(id))
 	if !ok {
 		return notFound("unknown platform %q", id)
@@ -149,15 +162,15 @@ func (a *App) ImportToken(ctx context.Context, id, accessToken string) error {
 	if err != nil {
 		return invalid("%v", err)
 	}
-	return a.saveToken(ctx, id, ts)
+	return a.saveToken(ctx, projectID, id, ts)
 }
 
-func (a *App) Disconnect(ctx context.Context, id string) error {
-	return a.Store.DeleteConnection(ctx, id)
+func (a *App) Disconnect(ctx context.Context, projectID int64, id string) error {
+	return a.Store.DeleteConnection(ctx, projectID, id)
 }
 
 // AccountInfo returns live account details for platforms that provide them.
-func (a *App) AccountInfo(ctx context.Context, id string) (any, error) {
+func (a *App) AccountInfo(ctx context.Context, projectID int64, id string) (any, error) {
 	ad, ok := a.Registry.Get(platform.ID(id))
 	if !ok {
 		return nil, notFound("unknown platform %q", id)
@@ -166,7 +179,7 @@ func (a *App) AccountInfo(ctx context.Context, id string) (any, error) {
 	if !ok {
 		return nil, nil
 	}
-	token, err := a.token(ctx, ad)
+	token, err := a.token(ctx, projectID, ad)
 	if err != nil {
 		return nil, err
 	}
@@ -174,8 +187,8 @@ func (a *App) AccountInfo(ctx context.Context, id string) (any, error) {
 }
 
 // token returns a valid access token, refreshing it when it is about to expire.
-func (a *App) token(ctx context.Context, ad platform.Adapter) (platform.TokenSet, error) {
-	conn, err := a.Store.GetConnection(ctx, string(ad.ID()))
+func (a *App) token(ctx context.Context, projectID int64, ad platform.Adapter) (platform.TokenSet, error) {
+	conn, err := a.Store.GetConnection(ctx, projectID, string(ad.ID()))
 	if errors.Is(err, store.ErrNotFound) {
 		return platform.TokenSet{}, invalid("%s is not connected; connect it in Settings", ad.DisplayName())
 	}
@@ -195,7 +208,7 @@ func (a *App) token(ctx context.Context, ad platform.Adapter) (platform.TokenSet
 			}
 			return ts, fmt.Errorf("%s token expired and refresh failed (%v); reconnect in Settings", ad.DisplayName(), err)
 		}
-		if err := a.saveToken(ctx, string(ad.ID()), fresh); err != nil {
+		if err := a.saveToken(ctx, projectID, string(ad.ID()), fresh); err != nil {
 			return fresh, err
 		}
 		ts = fresh
@@ -222,8 +235,9 @@ func (a *App) decodeToken(c store.Connection) (platform.TokenSet, error) {
 	return ts, nil
 }
 
-func (a *App) saveToken(ctx context.Context, id string, ts platform.TokenSet) error {
+func (a *App) saveToken(ctx context.Context, projectID int64, id string, ts platform.TokenSet) error {
 	c := store.Connection{
+		ProjectID:       projectID,
 		Platform:        id,
 		AccountID:       ts.AccountID,
 		AccountName:     ts.AccountName,
@@ -245,12 +259,17 @@ func (a *App) refreshLoop(ctx context.Context) {
 	tick := time.NewTicker(6 * time.Hour)
 	defer tick.Stop()
 	for {
-		for _, ad := range a.Registry.All() {
-			if _, err := a.Store.GetConnection(ctx, string(ad.ID())); err != nil {
+		conns, err := a.Store.ListConnections(ctx)
+		if err != nil {
+			a.Log.Warn("token refresh", "err", err)
+		}
+		for _, c := range conns {
+			ad, ok := a.Registry.Get(platform.ID(c.Platform))
+			if !ok {
 				continue
 			}
-			if _, err := a.token(ctx, ad); err != nil {
-				a.Log.Warn("token refresh", "platform", ad.ID(), "err", err)
+			if _, err := a.token(ctx, c.ProjectID, ad); err != nil {
+				a.Log.Warn("token refresh", "project", c.ProjectID, "platform", ad.ID(), "err", err)
 			}
 		}
 		select {

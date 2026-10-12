@@ -12,6 +12,7 @@ import (
 
 type Post struct {
 	ID             int64     `json:"id"`
+	ProjectID      int64     `json:"projectId"`
 	Title          string    `json:"title"`
 	Kind           string    `json:"kind"`
 	Caption        string    `json:"caption"`
@@ -27,12 +28,12 @@ type Post struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
-const postCols = `id, title, kind, caption, hashtags, aspect_strategy, cover_ms, cover_path, cover_custom, status, approved_hash, created_by, created_at, updated_at`
+const postCols = `id, project_id, title, kind, caption, hashtags, aspect_strategy, cover_ms, cover_path, cover_custom, status, approved_hash, created_by, created_at, updated_at`
 
 func scanPost(row interface{ Scan(...any) error }) (Post, error) {
 	var p Post
 	var tags, created, updated string
-	err := row.Scan(&p.ID, &p.Title, &p.Kind, &p.Caption, &tags, &p.AspectStrategy, &p.CoverMs, &p.CoverPath, &p.CoverCustom, &p.Status, &p.ApprovedHash, &p.CreatedBy, &created, &updated)
+	err := row.Scan(&p.ID, &p.ProjectID, &p.Title, &p.Kind, &p.Caption, &tags, &p.AspectStrategy, &p.CoverMs, &p.CoverPath, &p.CoverCustom, &p.Status, &p.ApprovedHash, &p.CreatedBy, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return p, ErrNotFound
 	}
@@ -52,9 +53,9 @@ func (s *Store) CreatePost(ctx context.Context, p *Post) error {
 	if p.Hashtags == nil {
 		p.Hashtags = []string{}
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO posts (title, kind, caption, hashtags, aspect_strategy, cover_ms, cover_path, cover_custom, status, approved_hash, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Title, p.Kind, p.Caption, mustJSON(p.Hashtags), p.AspectStrategy, p.CoverMs, p.CoverPath, p.CoverCustom, p.Status, p.ApprovedHash, p.CreatedBy, ts, ts)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO posts (project_id, title, kind, caption, hashtags, aspect_strategy, cover_ms, cover_path, cover_custom, status, approved_hash, created_by, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ProjectID, p.Title, p.Kind, p.Caption, mustJSON(p.Hashtags), p.AspectStrategy, p.CoverMs, p.CoverPath, p.CoverCustom, p.Status, p.ApprovedHash, p.CreatedBy, ts, ts)
 	if err != nil {
 		return err
 	}
@@ -67,12 +68,16 @@ func (s *Store) GetPost(ctx context.Context, id int64) (Post, error) {
 	return scanPost(s.db.QueryRowContext(ctx, `SELECT `+postCols+` FROM posts WHERE id = ?`, id))
 }
 
-// ListPosts returns posts, newest first. Empty status means all.
-func (s *Store) ListPosts(ctx context.Context, status string) ([]Post, error) {
-	q := `SELECT ` + postCols + ` FROM posts`
+// ListPosts returns posts, newest first. Zero projectID and empty status mean all.
+func (s *Store) ListPosts(ctx context.Context, projectID int64, status string) ([]Post, error) {
+	q := `SELECT ` + postCols + ` FROM posts WHERE 1 = 1`
 	var args []any
+	if projectID != 0 {
+		q += ` AND project_id = ?`
+		args = append(args, projectID)
+	}
 	if status != "" {
-		q += ` WHERE status = ?`
+		q += ` AND status = ?`
 		args = append(args, status)
 	}
 	rows, err := s.db.QueryContext(ctx, q+` ORDER BY updated_at DESC, id DESC`, args...)

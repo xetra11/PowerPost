@@ -51,11 +51,16 @@ func (s *Server) PrivateHandler() http.Handler {
 	mux.HandleFunc("POST /api/posts/{id}/duplicate", s.duplicate)
 	mux.HandleFunc("POST /api/posts/{id}/cover", s.uploadCover)
 	mux.HandleFunc("DELETE /api/posts/{id}/cover", s.clearCover)
-	mux.HandleFunc("GET /api/platforms", s.platforms)
-	mux.HandleFunc("GET /api/platforms/{platform}/account-info", s.accountInfo)
-	mux.HandleFunc("POST /api/connections/{platform}/start", s.startConnect)
-	mux.HandleFunc("POST /api/connections/{platform}/token", s.importToken)
-	mux.HandleFunc("DELETE /api/connections/{platform}", s.disconnect)
+	mux.HandleFunc("GET /api/projects", s.listProjects)
+	mux.HandleFunc("POST /api/projects", s.createProject)
+	mux.HandleFunc("GET /api/projects/{pid}", s.getProject)
+	mux.HandleFunc("PUT /api/projects/{pid}", s.updateProject)
+	mux.HandleFunc("DELETE /api/projects/{pid}", s.deleteProject)
+	mux.HandleFunc("GET /api/projects/{pid}/platforms", s.platforms)
+	mux.HandleFunc("GET /api/projects/{pid}/platforms/{platform}/account-info", s.accountInfo)
+	mux.HandleFunc("POST /api/projects/{pid}/connections/{platform}/start", s.startConnect)
+	mux.HandleFunc("POST /api/projects/{pid}/connections/{platform}/token", s.importToken)
+	mux.HandleFunc("DELETE /api/projects/{pid}/connections/{platform}", s.disconnect)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.saveSettings)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
@@ -97,8 +102,63 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listPosts(w http.ResponseWriter, r *http.Request) {
-	posts, err := s.App.ListPosts(r.Context(), r.URL.Query().Get("status"), r.URL.Query().Get("platform"))
+	q := r.URL.Query()
+	var projectID int64
+	if p := q.Get("project"); p != "" {
+		id, err := strconv.ParseInt(p, 10, 64)
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "invalid project id")
+			return
+		}
+		projectID = id
+	}
+	posts, err := s.App.ListPosts(r.Context(), projectID, q.Get("status"), q.Get("platform"))
 	s.respond(w, posts, err)
+}
+
+func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	list, err := s.App.Projects(r.Context())
+	s.respond(w, list, err)
+}
+
+func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
+	var in app.ProjectInput
+	if !decode(w, r, &in) {
+		return
+	}
+	v, err := s.App.CreateProject(r.Context(), in)
+	s.respondStatus(w, http.StatusCreated, v, err)
+}
+
+func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
+	pid, ok := projectID(w, r)
+	if !ok {
+		return
+	}
+	v, err := s.App.GetProject(r.Context(), pid)
+	s.respond(w, v, err)
+}
+
+func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
+	pid, ok := projectID(w, r)
+	if !ok {
+		return
+	}
+	var in app.ProjectInput
+	if !decode(w, r, &in) {
+		return
+	}
+	v, err := s.App.UpdateProject(r.Context(), pid, in)
+	s.respond(w, v, err)
+}
+
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
+	pid, ok := projectID(w, r)
+	if !ok {
+		return
+	}
+	err := s.App.DeleteProject(r.Context(), pid)
+	s.respond(w, map[string]bool{"deleted": err == nil}, err)
 }
 
 func (s *Server) createPost(w http.ResponseWriter, r *http.Request) {
@@ -228,33 +288,53 @@ func (s *Server) attempts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) platforms(w http.ResponseWriter, r *http.Request) {
-	list, err := s.App.Platforms(r.Context())
+	pid, ok := projectID(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.App.Platforms(r.Context(), pid)
 	s.respond(w, list, err)
 }
 
 func (s *Server) accountInfo(w http.ResponseWriter, r *http.Request) {
-	info, err := s.App.AccountInfo(r.Context(), r.PathValue("platform"))
+	pid, ok := projectID(w, r)
+	if !ok {
+		return
+	}
+	info, err := s.App.AccountInfo(r.Context(), pid, r.PathValue("platform"))
 	s.respond(w, map[string]any{"info": info}, err)
 }
 
 func (s *Server) startConnect(w http.ResponseWriter, r *http.Request) {
-	u, err := s.App.StartConnect(r.Context(), r.PathValue("platform"))
+	pid, ok := projectID(w, r)
+	if !ok {
+		return
+	}
+	u, err := s.App.StartConnect(r.Context(), pid, r.PathValue("platform"))
 	s.respond(w, map[string]string{"url": u}, err)
 }
 
 func (s *Server) importToken(w http.ResponseWriter, r *http.Request) {
+	pid, ok := projectID(w, r)
+	if !ok {
+		return
+	}
 	var in struct {
 		AccessToken string `json:"accessToken"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	err := s.App.ImportToken(r.Context(), r.PathValue("platform"), in.AccessToken)
+	err := s.App.ImportToken(r.Context(), pid, r.PathValue("platform"), in.AccessToken)
 	s.respond(w, map[string]bool{"connected": err == nil}, err)
 }
 
 func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
-	err := s.App.Disconnect(r.Context(), r.PathValue("platform"))
+	pid, ok := projectID(w, r)
+	if !ok {
+		return
+	}
+	err := s.App.Disconnect(r.Context(), pid, r.PathValue("platform"))
 	s.respond(w, map[string]bool{"disconnected": err == nil}, err)
 }
 
@@ -382,7 +462,11 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		redirectResult(w, r, back, platformID, msg)
 		return
 	}
-	if err := s.App.FinishConnect(r.Context(), platformID, q.Get("code"), q.Get("state")); err != nil {
+	pid, err := s.App.FinishConnect(r.Context(), platformID, q.Get("code"), q.Get("state"))
+	if pid != 0 {
+		back += "?project=" + strconv.FormatInt(pid, 10)
+	}
+	if err != nil {
 		s.Log.Warn("oauth callback", "platform", platformID, "err", err)
 		redirectResult(w, r, back, platformID, err.Error())
 		return
@@ -394,6 +478,10 @@ func redirectResult(w http.ResponseWriter, r *http.Request, back, platformID, er
 	q := url.Values{"connected": {platformID}}
 	if errMsg != "" {
 		q = url.Values{"connect_error": {platformID + ": " + errMsg}}
+	}
+	if strings.Contains(back, "?") {
+		http.Redirect(w, r, back+"&"+q.Encode(), http.StatusFound)
+		return
 	}
 	http.Redirect(w, r, back+"?"+q.Encode(), http.StatusFound)
 }
@@ -493,6 +581,15 @@ func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid post id")
+		return 0, false
+	}
+	return id, true
+}
+
+func projectID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("pid"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid project id")
 		return 0, false
 	}
 	return id, true

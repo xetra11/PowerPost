@@ -37,6 +37,7 @@ func (a *App) DuplicatePost(ctx context.Context, id int64) (PostView, error) {
 	}
 
 	p := store.Post{
+		ProjectID:      src.ProjectID,
 		Title:          copyTitle(src.Title),
 		Kind:           src.Kind,
 		Caption:        src.Caption,

@@ -18,6 +18,7 @@ import (
 )
 
 type CreatePostInput struct {
+	ProjectID      int64     `json:"projectId"`
 	Title          string    `json:"title"`
 	Caption        string    `json:"caption"`
 	Hashtags       *[]string `json:"hashtags"`  // nil: brand default hashtags
@@ -30,11 +31,16 @@ func (a *App) CreatePost(ctx context.Context, in CreatePostInput) (PostView, err
 	a.postMu.Lock()
 	defer a.postMu.Unlock()
 
-	settings, err := a.GetSettings(ctx)
+	if in.ProjectID == 0 {
+		return PostView{}, invalid("projectId is required")
+	}
+	proj, err := a.project(ctx, in.ProjectID)
 	if err != nil {
 		return PostView{}, err
 	}
+	settings := a.projectSettings(proj)
 	p := store.Post{
+		ProjectID:      proj.ID,
 		Title:          strings.TrimSpace(in.Title),
 		Kind:           string(platform.KindVideo),
 		Caption:        in.Caption,
@@ -318,9 +324,9 @@ func (a *App) GetPost(ctx context.Context, id int64) (PostView, error) {
 	return a.buildView(ctx, p)
 }
 
-// ListPosts filters by status and/or platform (enabled target).
-func (a *App) ListPosts(ctx context.Context, status, platformID string) ([]PostView, error) {
-	posts, err := a.Store.ListPosts(ctx, status)
+// ListPosts filters by project (0 = all), status and/or platform (enabled target).
+func (a *App) ListPosts(ctx context.Context, projectID int64, status, platformID string) ([]PostView, error) {
+	posts, err := a.Store.ListPosts(ctx, projectID, status)
 	if err != nil {
 		return nil, err
 	}

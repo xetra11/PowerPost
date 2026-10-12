@@ -185,7 +185,9 @@ func (s *Store) RecoverJobs(ctx context.Context, requeue ...string) ([]Job, erro
 
 // ---- Connections ----
 
+// Connection is a platform account linked to a project.
 type Connection struct {
+	ProjectID        int64
 	Platform         string
 	AccountID        string
 	AccountName      string
@@ -197,23 +199,13 @@ type Connection struct {
 	UpdatedAt        time.Time
 }
 
-func (s *Store) SaveConnection(ctx context.Context, c Connection) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO connections (platform, account_id, account_name, access_token_enc, refresh_token_enc, expires_at, refresh_expires_at, scopes, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(platform) DO UPDATE SET account_id = excluded.account_id, account_name = excluded.account_name,
-			access_token_enc = excluded.access_token_enc, refresh_token_enc = excluded.refresh_token_enc, expires_at = excluded.expires_at,
-			refresh_expires_at = excluded.refresh_expires_at, scopes = excluded.scopes, updated_at = excluded.updated_at`,
-		c.Platform, c.AccountID, c.AccountName, c.AccessTokenEnc, c.RefreshTokenEnc, formatNullTime(c.ExpiresAt), formatNullTime(c.RefreshExpiresAt), c.Scopes, now())
-	return err
-}
+const connectionCols = `project_id, platform, account_id, account_name, access_token_enc, refresh_token_enc, expires_at, refresh_expires_at, scopes, updated_at`
 
-func (s *Store) GetConnection(ctx context.Context, platform string) (Connection, error) {
+func scanConnection(row interface{ Scan(...any) error }) (Connection, error) {
 	var c Connection
 	var exp, rexp sql.NullString
 	var updated string
-	err := s.db.QueryRowContext(ctx, `SELECT platform, account_id, account_name, access_token_enc, refresh_token_enc, expires_at, refresh_expires_at, scopes, updated_at
-		FROM connections WHERE platform = ?`, platform).
-		Scan(&c.Platform, &c.AccountID, &c.AccountName, &c.AccessTokenEnc, &c.RefreshTokenEnc, &exp, &rexp, &c.Scopes, &updated)
+	err := row.Scan(&c.ProjectID, &c.Platform, &c.AccountID, &c.AccountName, &c.AccessTokenEnc, &c.RefreshTokenEnc, &exp, &rexp, &c.Scopes, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return c, ErrNotFound
 	}
@@ -225,28 +217,70 @@ func (s *Store) GetConnection(ctx context.Context, platform string) (Connection,
 	return c, nil
 }
 
-func (s *Store) DeleteConnection(ctx context.Context, platform string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM connections WHERE platform = ?`, platform)
+func (s *Store) SaveConnection(ctx context.Context, c Connection) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO connections (`+connectionCols+`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(project_id, platform) DO UPDATE SET account_id = excluded.account_id, account_name = excluded.account_name,
+			access_token_enc = excluded.access_token_enc, refresh_token_enc = excluded.refresh_token_enc, expires_at = excluded.expires_at,
+			refresh_expires_at = excluded.refresh_expires_at, scopes = excluded.scopes, updated_at = excluded.updated_at`,
+		c.ProjectID, c.Platform, c.AccountID, c.AccountName, c.AccessTokenEnc, c.RefreshTokenEnc, formatNullTime(c.ExpiresAt), formatNullTime(c.RefreshExpiresAt), c.Scopes, now())
 	return err
 }
 
-func (s *Store) SaveOAuthState(ctx context.Context, state, platform, verifier string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO oauth_states (state, platform, verifier, created_at) VALUES (?, ?, ?, ?)`, state, platform, verifier, now())
+func (s *Store) GetConnection(ctx context.Context, projectID int64, platform string) (Connection, error) {
+	return scanConnection(s.db.QueryRowContext(ctx, `SELECT `+connectionCols+` FROM connections WHERE project_id = ? AND platform = ?`, projectID, platform))
+}
+
+// ListConnections returns the connections of all projects.
+func (s *Store) ListConnections(ctx context.Context) ([]Connection, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+connectionCols+` FROM connections ORDER BY project_id, platform`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Connection
+	for rows.Next() {
+		c, err := scanConnection(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteConnection(ctx context.Context, projectID int64, platform string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM connections WHERE project_id = ? AND platform = ?`, projectID, platform)
 	return err
 }
 
-// TakeOAuthState consumes a state value (younger than maxAge) and returns its platform and PKCE verifier.
-func (s *Store) TakeOAuthState(ctx context.Context, state string, maxAge time.Duration) (platform, verifier string, err error) {
+// OAuthState is a pending sign-in started from Settings.
+type OAuthState struct {
+	ProjectID int64
+	Platform  string
+	Verifier  string // PKCE
+}
+
+func (s *Store) SaveOAuthState(ctx context.Context, state string, st OAuthState) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO oauth_states (state, project_id, platform, verifier, created_at) VALUES (?, ?, ?, ?, ?)`,
+		state, st.ProjectID, st.Platform, st.Verifier, now())
+	return err
+}
+
+// TakeOAuthState consumes a state value younger than maxAge.
+func (s *Store) TakeOAuthState(ctx context.Context, state string, maxAge time.Duration) (OAuthState, error) {
+	var st OAuthState
 	var created string
-	err = s.db.QueryRowContext(ctx, `DELETE FROM oauth_states WHERE state = ? RETURNING platform, verifier, created_at`, state).Scan(&platform, &verifier, &created)
+	err := s.db.QueryRowContext(ctx, `DELETE FROM oauth_states WHERE state = ? RETURNING project_id, platform, verifier, created_at`, state).
+		Scan(&st.ProjectID, &st.Platform, &st.Verifier, &created)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", ErrNotFound
+		return st, ErrNotFound
 	}
 	if err != nil {
-		return "", "", err
+		return st, err
 	}
 	if time.Since(parseTime(created)) > maxAge {
-		return "", "", ErrNotFound
+		return st, ErrNotFound
 	}
-	return platform, verifier, nil
+	return st, nil
 }

@@ -78,8 +78,16 @@ export interface Stats {
 export type PostStatus = 'draft' | 'approved' | 'publishing' | 'published' | 'partial' | 'failed'
 export type AspectStrategy = 'blur' | 'crop' | 'pad'
 
+export interface ProjectRef {
+  id: number
+  slug: string
+  name: string
+}
+
 export interface Post {
   id: number
+  projectId: number
+  project: ProjectRef
   title: string
   kind: string
   caption: string
@@ -127,10 +135,23 @@ export interface Platform {
   optionsSchema: { properties: Record<string, SchemaProp> }
 }
 
-export interface Settings {
+export interface ProjectSettings {
   brand: { gameName: string; link: string; defaultHashtags: string[]; toneNotes: string }
   defaultPlatforms: string[]
   defaultAspect: AspectStrategy
+}
+
+export interface Project {
+  id: number
+  slug: string
+  name: string
+  settings: ProjectSettings
+  postCount: number
+  createdAt: string
+}
+
+/** Settings shared by all projects. */
+export interface Settings {
   mcpAllowPublish: boolean
 }
 
@@ -166,9 +187,14 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 
 export const api = {
   status: () => request<SystemStatus>('GET', '/api/status'),
-  posts: () => request<Post[]>('GET', '/api/posts'),
+  projects: () => request<Project[]>('GET', '/api/projects'),
+  createProject: (name: string) => request<Project>('POST', '/api/projects', { name }),
+  updateProject: (id: number, patch: { name?: string; slug?: string; settings?: ProjectSettings }) =>
+    request<Project>('PUT', `/api/projects/${id}`, patch),
+  deleteProject: (id: number) => request<unknown>('DELETE', `/api/projects/${id}`),
+  posts: (projectId: number) => request<Post[]>('GET', `/api/posts?project=${projectId}`),
   post: (id: number) => request<Post>('GET', `/api/posts/${id}`),
-  createPost: () => request<Post>('POST', '/api/posts', {}),
+  createPost: (projectId: number) => request<Post>('POST', '/api/posts', { projectId }),
   updatePost: (id: number, patch: Partial<Pick<Post, 'title' | 'caption' | 'hashtags' | 'aspectStrategy' | 'coverMs'>>) =>
     request<Post>('PATCH', `/api/posts/${id}`, patch),
   deletePost: (id: number) => request<unknown>('DELETE', `/api/posts/${id}`),
@@ -182,11 +208,13 @@ export const api = {
   checkLive: (id: number) => request<Post>('POST', `/api/posts/${id}/check-live`, {}),
   clearCover: (id: number) => request<Post>('DELETE', `/api/posts/${id}/cover`),
   attempts: (id: number) => request<Attempt[]>('GET', `/api/posts/${id}/attempts`),
-  platforms: () => request<Platform[]>('GET', '/api/platforms'),
-  accountInfo: (platform: string) => request<{ info: Record<string, unknown> | null }>('GET', `/api/platforms/${platform}/account-info`),
-  startConnect: (platform: string) => request<{ url: string }>('POST', `/api/connections/${platform}/start`, {}),
-  disconnect: (platform: string) => request<unknown>('DELETE', `/api/connections/${platform}`),
-  importToken: (platform: string, accessToken: string) => request<unknown>('POST', `/api/connections/${platform}/token`, { accessToken }),
+  platforms: (projectId: number) => request<Platform[]>('GET', `/api/projects/${projectId}/platforms`),
+  accountInfo: (projectId: number, platform: string) =>
+    request<{ info: Record<string, unknown> | null }>('GET', `/api/projects/${projectId}/platforms/${platform}/account-info`),
+  startConnect: (projectId: number, platform: string) => request<{ url: string }>('POST', `/api/projects/${projectId}/connections/${platform}/start`, {}),
+  disconnect: (projectId: number, platform: string) => request<unknown>('DELETE', `/api/projects/${projectId}/connections/${platform}`),
+  importToken: (projectId: number, platform: string, accessToken: string) =>
+    request<unknown>('POST', `/api/projects/${projectId}/connections/${platform}/token`, { accessToken }),
   settings: () => request<Settings>('GET', '/api/settings'),
   saveSettings: (s: Settings) => request<Settings>('PUT', '/api/settings', s),
 }

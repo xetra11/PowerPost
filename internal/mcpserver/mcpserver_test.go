@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"powerposter/internal/app"
 	"powerposter/internal/mcpserver"
 	"powerposter/internal/testutil"
 )
@@ -123,5 +124,31 @@ func TestClaudeWorkflowOverHTTP(t *testing.T) {
 	brand, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "powerposter://brand"})
 	if err != nil || !strings.Contains(brand.Contents[0].Text, "gameName") {
 		t.Fatalf("brand resource: %v %v", brand, err)
+	}
+
+	// With a second project, Claude has to say which one a post belongs to.
+	if _, err := a.CreateProject(ctx, app.ProjectInput{Name: "Sky Forge"}); err != nil {
+		t.Fatal(err)
+	}
+	res, isErr = call(t, cs, "create_post", map[string]any{"caption": "Which one?"})
+	if !isErr || !strings.Contains(res["error"].(string), "sky-forge") {
+		t.Fatalf("expected project choice error, got %v", res)
+	}
+	post, isErr = call(t, cs, "create_post", map[string]any{"project": "sky-forge", "caption": "Forge!"})
+	if isErr || post["project"] != "sky-forge" {
+		t.Fatalf("create in project: %v", post)
+	}
+	projects, _ := call(t, cs, "list_projects", nil)
+	list := projects["projects"].([]any)
+	if len(list) != 2 || list[1].(map[string]any)["slug"] != "sky-forge" || len(list[1].(map[string]any)["accounts"].(map[string]any)) != 0 {
+		t.Fatalf("list_projects: %v", projects)
+	}
+	posts, _ := call(t, cs, "list_posts", map[string]any{"project": "sky-forge"})
+	if n := len(posts["posts"].([]any)); n != 1 {
+		t.Fatalf("list_posts of project: %d posts", n)
+	}
+	platforms, _ = call(t, cs, "list_platforms", map[string]any{"project": "sky-forge"})
+	if p := platforms["platforms"].([]any)[0].(map[string]any); p["connected"] != false {
+		t.Fatalf("sky-forge should not be connected: %v", p)
 	}
 }

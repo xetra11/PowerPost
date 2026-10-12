@@ -21,7 +21,7 @@ func TestDraftReviewPublishFlow(t *testing.T) {
 	a := testutil.NewApp(t, fake)
 	ctx := context.Background()
 
-	v, err := a.CreatePost(ctx, app.CreatePostInput{Title: "Launch", Caption: "Raid the longhouse!", Hashtags: ptr([]string{"#indiegame", "gamedev"})})
+	v, err := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Title: "Launch", Caption: "Raid the longhouse!", Hashtags: ptr([]string{"#indiegame", "gamedev"})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestFailedPublishCanBeRetried(t *testing.T) {
 	a := testutil.NewApp(t, fake)
 	ctx := context.Background()
 
-	v, _ := a.CreatePost(ctx, app.CreatePostInput{Caption: "Hi"})
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Caption: "Hi"})
 	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 1080, 1920, 30, 1.5))
 	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestFailedPublishCanBeRetried(t *testing.T) {
 func TestIdenticalOutputsShareOneFile(t *testing.T) {
 	a := testutil.NewApp(t, &testutil.FakeAdapter{Name: "one"}, &testutil.FakeAdapter{Name: "two"})
 	ctx := context.Background()
-	v, _ := a.CreatePost(ctx, app.CreatePostInput{})
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project})
 	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 640, 360, 30, 1.5))
 	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
 		t.Fatal(err)
@@ -168,7 +168,7 @@ func TestIdenticalOutputsShareOneFile(t *testing.T) {
 func TestValidationErrors(t *testing.T) {
 	a := testutil.NewApp(t, &testutil.FakeAdapter{Name: "fake"})
 	ctx := context.Background()
-	v, _ := a.CreatePost(ctx, app.CreatePostInput{Caption: strings.Repeat("x", 120), Hashtags: ptr([]string{"a", "b", "c", "d", "e", "f"})})
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Caption: strings.Repeat("x", 120), Hashtags: ptr([]string{"a", "b", "c", "d", "e", "f"})})
 
 	codes := map[string]bool{}
 	for _, i := range v.Issues {
@@ -227,25 +227,95 @@ func TestResolveInboxPath(t *testing.T) {
 	}
 }
 
-func TestSettings(t *testing.T) {
+func TestProjectSettings(t *testing.T) {
 	a := testutil.NewApp(t, &testutil.FakeAdapter{Name: "fake"})
 	ctx := context.Background()
-	s, err := a.GetSettings(ctx)
-	if err != nil || s.DefaultAspect != "blur" || len(s.DefaultPlatforms) != 1 {
-		t.Fatalf("defaults %+v %v", s, err)
+	p, err := a.GetProject(ctx, testutil.Project)
+	if err != nil || p.Settings.DefaultAspect != "blur" || len(p.Settings.DefaultPlatforms) != 1 {
+		t.Fatalf("defaults %+v %v", p, err)
 	}
+	s := p.Settings
 	s.Brand.DefaultHashtags = []string{"#Donnervolk", "donnervolk", "indiegame"}
-	if s, err = a.SaveSettings(ctx, s); err != nil || len(s.Brand.DefaultHashtags) != 2 {
-		t.Fatalf("save %+v %v", s, err)
+	if p, err = a.UpdateProject(ctx, p.ID, app.ProjectInput{Settings: &s}); err != nil || len(p.Settings.Brand.DefaultHashtags) != 2 {
+		t.Fatalf("save %+v %v", p, err)
 	}
-	v, _ := a.CreatePost(ctx, app.CreatePostInput{})
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project})
 	if strings.Join(v.Hashtags, ",") != "Donnervolk,indiegame" {
 		t.Fatalf("brand hashtags not applied: %v", v.Hashtags)
 	}
 	s.DefaultPlatforms = []string{"nope"}
-	if _, err := a.SaveSettings(ctx, s); app.KindOf(err) != app.KindInvalid {
+	if _, err := a.UpdateProject(ctx, p.ID, app.ProjectInput{Settings: &s}); app.KindOf(err) != app.KindInvalid {
 		t.Fatalf("unknown platform accepted: %v", err)
 	}
+}
+
+func TestProjectsAreSeparate(t *testing.T) {
+	fake := &testutil.FakeAdapter{Name: "fake"}
+	a := testutil.NewApp(t, fake)
+	ctx := context.Background()
+
+	other, err := a.CreateProject(ctx, app.ProjectInput{Name: "Über Space Game"})
+	if err != nil || other.Slug != "ueber-space-game" || other.Settings.Brand.GameName != "Über Space Game" || len(other.Settings.DefaultPlatforms) != 1 {
+		t.Fatalf("create %+v %v", other, err)
+	}
+	if dup, err := a.CreateProject(ctx, app.ProjectInput{Name: "Über Space Game"}); err != nil || dup.Slug != "ueber-space-game-2" {
+		t.Fatalf("second project with same name: %+v %v", dup, err)
+	}
+	if _, err := a.CreateProject(ctx, app.ProjectInput{Name: " "}); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("empty name accepted: %v", err)
+	}
+	for _, ref := range []string{"ueber-space-game", "Über Space Game", "UEBER-SPACE-GAME"} {
+		if p, err := a.ResolveProject(ctx, ref); err != nil || p.ID != other.ID {
+			t.Fatalf("resolve %q: %+v %v", ref, p, err)
+		}
+	}
+	if _, err := a.ResolveProject(ctx, ""); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("empty ref with several projects: %v", err)
+	}
+
+	// The new project has its own (missing) connection.
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: other.ID, Caption: "Hi"})
+	if v.Project.Slug != "ueber-space-game" || !hasIssue(v, "NOT_CONNECTED") {
+		t.Fatalf("expected NOT_CONNECTED in other project: %+v", v.Issues)
+	}
+	testutil.ConnectProject(t, a, other.ID, "fake")
+	if v, _ = a.GetPost(ctx, v.ID); hasIssue(v, "NOT_CONNECTED") {
+		t.Fatal("still not connected after connecting the project")
+	}
+	if err := a.Disconnect(ctx, other.ID, "fake"); err != nil {
+		t.Fatal(err)
+	}
+	mine, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Caption: "Hi"})
+	if hasIssue(mine, "NOT_CONNECTED") {
+		t.Fatal("disconnecting one project disconnected the other")
+	}
+
+	list, _ := a.ListPosts(ctx, other.ID, "", "")
+	if len(list) != 1 || list[0].ID != v.ID {
+		t.Fatalf("posts of other project: %+v", list)
+	}
+	if dup, err := a.DuplicatePost(ctx, v.ID); err != nil || dup.ProjectID != other.ID {
+		t.Fatalf("duplicate keeps project: %+v %v", dup.Post, err)
+	}
+
+	if err := a.DeleteProject(ctx, other.ID); app.KindOf(err) != app.KindConflict {
+		t.Fatalf("delete project with posts: %v", err)
+	}
+	if err := a.DeleteProject(ctx, other.ID+1); err != nil {
+		t.Fatalf("delete empty project: %v", err)
+	}
+	if _, err := a.CreatePost(ctx, app.CreatePostInput{}); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("post without project: %v", err)
+	}
+}
+
+func hasIssue(v app.PostView, code string) bool {
+	for _, i := range v.Issues {
+		if i.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 // localFake is a platform that accepts http://localhost OAuth redirects (like TikTok).
@@ -259,7 +329,7 @@ func TestLocalRedirectWithoutTunnel(t *testing.T) {
 	a.Cfg.PublicBaseURL = ""
 	ctx := context.Background()
 
-	list, err := a.Platforms(ctx)
+	list, err := a.Platforms(ctx, testutil.Project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,10 +343,10 @@ func TestLocalRedirectWithoutTunnel(t *testing.T) {
 	if p := byID["remote"]; p.RedirectURI != "" || strings.Join(p.MissingSettings, ",") != "PUBLIC_BASE_URL" {
 		t.Fatalf("remote platform: %q missing %v", p.RedirectURI, p.MissingSettings)
 	}
-	if _, err := a.StartConnect(ctx, "local"); err != nil {
+	if _, err := a.StartConnect(ctx, testutil.Project, "local"); err != nil {
 		t.Fatalf("local connect: %v", err)
 	}
-	if _, err := a.StartConnect(ctx, "remote"); app.KindOf(err) != app.KindInvalid {
+	if _, err := a.StartConnect(ctx, testutil.Project, "remote"); app.KindOf(err) != app.KindInvalid {
 		t.Fatalf("remote connect without tunnel: %v", err)
 	}
 }
@@ -285,11 +355,11 @@ func TestPublishPlatformsIndividually(t *testing.T) {
 	ig, tt := &testutil.FakeAdapter{Name: "ig"}, &testutil.FakeAdapter{Name: "tt"}
 	a := testutil.NewApp(t, ig, tt)
 	ctx := context.Background()
-	if err := a.Disconnect(ctx, "tt"); err != nil { // tt can't publish yet
+	if err := a.Disconnect(ctx, testutil.Project, "tt"); err != nil { // tt can't publish yet
 		t.Fatal(err)
 	}
 
-	v, _ := a.CreatePost(ctx, app.CreatePostInput{Caption: "Hi"})
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Caption: "Hi"})
 	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 1080, 1920, 30, 1.5))
 	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
 		t.Fatal(err)
@@ -336,7 +406,7 @@ func TestPublishPlatformsIndividually(t *testing.T) {
 func TestCoverImageAndFrame(t *testing.T) {
 	a := testutil.NewApp(t, &testutil.FakeAdapter{Name: "fake"})
 	ctx := context.Background()
-	v, _ := a.CreatePost(ctx, app.CreatePostInput{Caption: "Hi"})
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Caption: "Hi"})
 	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 1080, 1920, 30, 2))
 	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
 		t.Fatal(err)
@@ -386,7 +456,7 @@ func TestDeletedPostCanBeRepublished(t *testing.T) {
 	fake := &testutil.FakeAdapter{Name: "fake"}
 	a := testutil.NewApp(t, fake)
 	ctx := context.Background()
-	v, _ := a.CreatePost(ctx, app.CreatePostInput{Caption: "Hi"})
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Caption: "Hi"})
 	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 1080, 1920, 30, 1.5))
 	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
 		t.Fatal(err)
@@ -440,7 +510,7 @@ func TestDuplicatePartlyPublishedPost(t *testing.T) {
 	ig, tt := &testutil.FakeAdapter{Name: "ig"}, &testutil.FakeAdapter{Name: "tt"}
 	a := testutil.NewApp(t, ig, tt)
 	ctx := context.Background()
-	v, _ := a.CreatePost(ctx, app.CreatePostInput{Title: "Mood video", Caption: "Hi", Hashtags: ptr([]string{"indiegame"})})
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Title: "Mood video", Caption: "Hi", Hashtags: ptr([]string{"indiegame"})})
 	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 640, 360, 30, 1.5))
 	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
 		t.Fatal(err)

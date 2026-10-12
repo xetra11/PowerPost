@@ -16,6 +16,7 @@ import {
 import { ErrorBanner, IssueList, OptionsForm, StatusBadge, targetSummary } from '../components/common'
 import { CoverPicker } from '../components/CoverPicker'
 import { usePolling } from '../usePolling'
+import { useFollowProject } from '../project'
 
 interface Draft {
   title: string
@@ -48,9 +49,11 @@ export default function EditorPage() {
   const [dragOver, setDragOver] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
 
+  const projectId = post?.projectId
+  useFollowProject(projectId)
   useEffect(() => {
-    api.platforms().then(setPlatforms).catch((e) => setError(e.message))
-  }, [])
+    if (projectId) api.platforms(projectId).then(setPlatforms).catch((e) => setError(e.message))
+  }, [projectId])
   useEffect(() => {
     if (post && !dirty) setDraft(draftFrom(post))
   }, [post, dirty])
@@ -302,7 +305,7 @@ export default function EditorPage() {
             {t.enabled && (
               <div className="grid platform-body">
                 <div>
-                  <AccountLine platform={p} />
+                  <AccountLine projectId={post.projectId} platform={p} />
                   <label>
                     <input
                       type="checkbox"
@@ -364,13 +367,13 @@ export default function EditorPage() {
 }
 
 /** Shows which account a post goes to; TikTok requires showing the creator nickname. */
-function AccountLine({ platform }: { platform: Platform | undefined }) {
+function AccountLine({ projectId, platform }: { projectId: number; platform: Platform | undefined }) {
   const [info, setInfo] = useState<Record<string, unknown> | null>(null)
   useEffect(() => {
     if (platform?.connected && platform.id === 'tiktok') {
-      api.accountInfo(platform.id).then((r) => setInfo(r.info)).catch(() => setInfo(null))
+      api.accountInfo(projectId, platform.id).then((r) => setInfo(r.info)).catch(() => setInfo(null))
     }
-  }, [platform?.id, platform?.connected])
+  }, [projectId, platform?.id, platform?.connected])
   if (!platform) return null
   if (!platform.configured)
     return <p className="muted">{platform.displayName} app credentials are missing in .env — see the README to publish here.</p>

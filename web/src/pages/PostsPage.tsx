@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { api, type Post } from '../api'
+import { api, type Post, type Project } from '../api'
 import { ErrorBanner, StatusBadge, targetSummary } from '../components/common'
 import { usePolling } from '../usePolling'
+import { useProjects } from '../project'
 
 const tabs = [
   { id: 'all', label: 'All', match: () => true },
@@ -13,19 +14,26 @@ const tabs = [
 ]
 
 export default function PostsPage() {
+  const { current, error } = useProjects()
+  if (!current) return error ? <ErrorBanner error={error} /> : <p aria-busy="true">Loading…</p>
+  // Keyed so switching projects starts with a fresh list.
+  return <PostList key={current.id} project={current} />
+}
+
+function PostList({ project }: { project: Project }) {
   const navigate = useNavigate()
   const [tab, setTab] = useState('all')
   const [platform, setPlatform] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const { data: posts, error: loadError } = usePolling(api.posts, 3000, (d) =>
+  const { data: posts, error: loadError } = usePolling(() => api.posts(project.id), 3000, (d) =>
     (d ?? []).some((p) => p.status === 'publishing' || p.targets.some((t) => t.rendition?.status === 'processing')),
   )
 
   const create = async () => {
     setCreating(true)
     try {
-      const p = await api.createPost()
+      const p = await api.createPost(project.id)
       navigate(`/posts/${p.id}`)
     } catch (e) {
       setError((e as Error).message)
@@ -40,7 +48,9 @@ export default function PostsPage() {
   return (
     <>
       <div className="page-head">
-        <h2>Posts</h2>
+        <h2>
+          Posts <small className="muted">· {project.name}</small>
+        </h2>
         <button onClick={create} aria-busy={creating} disabled={creating}>
           New post
         </button>

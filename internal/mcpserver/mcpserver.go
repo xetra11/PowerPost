@@ -23,8 +23,8 @@ import (
 const instructions = `PowerPoster prepares and publishes social media posts (Instagram Reels, TikTok videos) for a game studio.
 
 Workflow:
-1. get_platform_constraints / read powerposter://brand to learn limits and the brand voice.
-2. create_post with caption, hashtags and target platforms.
+1. list_projects to pick the project (each game/brand is a project with its own brand voice, hashtags and accounts), get_platform_constraints for limits.
+2. create_post with the project, caption, hashtags and target platforms. Write the caption in that project's brand voice.
 3. attach_media with a video file saved inside the PowerPoster inbox folder (see list_platforms → inboxHostPath). PowerPoster converts it for each platform automatically.
 4. validate_post until "ready" is true (conversion runs in the background; poll every few seconds).
 5. Give the user the review link (get_review_link). The user approves on the review page.
@@ -37,9 +37,10 @@ func New(a *app.App) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "powerposter", Title: "PowerPoster", Version: "0.1.0"}, &mcp.ServerOptions{Instructions: instructions})
 	t := tools{a}
 
-	mcp.AddTool(s, &mcp.Tool{Name: "list_platforms", Description: "List supported platforms with connection status, the inbox folder for attach_media, and each platform's options schema."}, t.listPlatforms)
+	mcp.AddTool(s, &mcp.Tool{Name: "list_projects", Description: "List projects (one per game or brand) with their brand profile (game name, link, default hashtags, tone notes), default platforms and connected accounts. Pass a project's slug to create_post."}, t.listProjects)
+	mcp.AddTool(s, &mcp.Tool{Name: "list_platforms", Description: "List supported platforms with connection status for a project, the inbox folder for attach_media, and each platform's options schema."}, t.listPlatforms)
 	mcp.AddTool(s, &mcp.Tool{Name: "get_platform_constraints", Description: "Media and caption limits for a platform (resolution, fps, duration, size, caption length). Use it to produce fitting media up front."}, t.getConstraints)
-	mcp.AddTool(s, &mcp.Tool{Name: "create_post", Description: "Create a draft post. Hashtags default to the brand's default hashtags; platforms default to the user's default platforms."}, t.createPost)
+	mcp.AddTool(s, &mcp.Tool{Name: "create_post", Description: "Create a draft post in a project. Hashtags default to the project's default hashtags; platforms default to the project's default platforms."}, t.createPost)
 	mcp.AddTool(s, &mcp.Tool{Name: "attach_media", Description: "Attach a video file to a post (replaces any existing video). The path must be inside the PowerPoster inbox folder. Conversion for each platform starts automatically."}, t.attachMedia)
 	mcp.AddTool(s, &mcp.Tool{Name: "upload_media", Description: "Attach a small video (max 50 MB) by sending its content as base64. Prefer attach_media for files in the inbox."}, t.uploadMedia)
 	mcp.AddTool(s, &mcp.Tool{Name: "set_cover_image", Description: "Use an image from the inbox folder as custom cover (Instagram; converted to 1080x1920). TikTok always uses the video frame at cover_ms. Pass an empty path to go back to the video frame."}, t.setCover)
@@ -48,19 +49,28 @@ func New(a *app.App) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "set_target_options", Description: "Per-platform settings: enable/disable a platform, caption or hashtag overrides, and platform options (see the options schema in list_platforms)."}, t.setTarget)
 	mcp.AddTool(s, &mcp.Tool{Name: "validate_post", Description: "Validation result per platform: errors, warnings (incl. automatic fixes like downscaling), conversion progress, and whether the post is ready for review."}, t.validatePost)
 	mcp.AddTool(s, &mcp.Tool{Name: "get_post", Description: "Full state of a post."}, t.getPost)
-	mcp.AddTool(s, &mcp.Tool{Name: "list_posts", Description: "List posts, newest first. Optional filters: status (draft|approved|publishing|published|partial|failed) and platform."}, t.listPosts)
+	mcp.AddTool(s, &mcp.Tool{Name: "list_posts", Description: "List posts, newest first. Optional filters: project, status (draft|approved|publishing|published|partial|failed) and platform."}, t.listPosts)
 	mcp.AddTool(s, &mcp.Tool{Name: "get_review_link", Description: "URL of the review page where the user previews the converted files and approves the post."}, t.reviewLink)
 	mcp.AddTool(s, &mcp.Tool{Name: "publish_post", Description: "Publish an approved post. Fails unless the user approved it in the UI and enabled \"Allow Claude to publish\" in Settings."}, t.publishPost)
 	mcp.AddTool(s, &mcp.Tool{Name: "get_post_stats", Description: "Engagement of a published post per platform (likes, comments, views where the platform provides them)."}, t.postStats)
 	mcp.AddTool(s, &mcp.Tool{Name: "get_publish_status", Description: "Per-platform publish progress, permalinks and errors."}, t.publishStatus)
 
-	s.AddResource(&mcp.Resource{URI: "powerposter://brand", Name: "brand", Title: "Brand profile", Description: "Game name, link, default hashtags and tone notes for captions.", MIMEType: "application/json"},
+	s.AddResource(&mcp.Resource{URI: "powerposter://brand", Name: "brand", Title: "Brand profiles", Description: "Per project: game name, link, default hashtags and tone notes for captions.", MIMEType: "application/json"},
 		func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-			st, err := a.GetSettings(ctx)
+			list, err := a.Projects(ctx)
 			if err != nil {
 				return nil, err
 			}
-			return jsonResource(req.Params.URI, st.Brand)
+			type brand struct {
+				Project string    `json:"project"`
+				Name    string    `json:"name"`
+				Brand   app.Brand `json:"brand"`
+			}
+			out := []brand{}
+			for _, p := range list {
+				out = append(out, brand{p.Slug, p.Name, p.Settings.Brand})
+			}
+			return jsonResource(req.Params.URI, out)
 		})
 	for _, ad := range a.Registry.All() {
 		uri := fmt.Sprintf("powerposter://platforms/%s/constraints", ad.ID())
@@ -100,7 +110,12 @@ type postIn struct {
 	PostID int64 `json:"post_id" jsonschema:"the post id"`
 }
 
+type projectIn struct {
+	Project string `json:"project,omitempty" jsonschema:"project slug or name (see list_projects); may be omitted when there is only one project"`
+}
+
 type createPostIn struct {
+	Project        string    `json:"project,omitempty" jsonschema:"project slug or name (see list_projects); may be omitted when there is only one project"`
 	Title          string    `json:"title,omitempty" jsonschema:"internal title shown in the post list"`
 	Caption        string    `json:"caption,omitempty" jsonschema:"caption text without hashtags"`
 	Hashtags       *[]string `json:"hashtags,omitempty" jsonschema:"hashtags without '#'; omit to use the brand defaults"`
@@ -145,6 +160,7 @@ type setTargetIn struct {
 }
 
 type listIn struct {
+	Project  string `json:"project,omitempty" jsonschema:"filter by project slug or name"`
 	Status   string `json:"status,omitempty" jsonschema:"filter by status"`
 	Platform string `json:"platform,omitempty" jsonschema:"filter by enabled platform"`
 }
@@ -156,25 +172,71 @@ type publishIn struct {
 
 // ---- handlers ----
 
-func (t tools) listPlatforms(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, any, error) {
-	list, err := t.a.Platforms(ctx)
+func (t tools) listProjects(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, any, error) {
+	list, err := t.a.Projects(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
 	type pv struct {
+		Slug             string            `json:"slug"`
+		Name             string            `json:"name"`
+		Brand            app.Brand         `json:"brand"`
+		DefaultPlatforms []string          `json:"defaultPlatforms"`
+		Accounts         map[string]string `json:"accounts"` // platform → connected account
+		Posts            int               `json:"posts"`
+	}
+	out := []pv{}
+	for _, p := range list {
+		plats, err := t.a.Platforms(ctx, p.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		accounts := map[string]string{}
+		for _, pl := range plats {
+			if pl.Connected {
+				accounts[pl.ID] = pl.AccountName
+			}
+		}
+		out = append(out, pv{p.Slug, p.Name, p.Settings.Brand, p.Settings.DefaultPlatforms, accounts, p.PostCount})
+	}
+	return nil, map[string]any{"projects": out}, nil
+}
+
+func (t tools) listPlatforms(ctx context.Context, _ *mcp.CallToolRequest, in projectIn) (*mcp.CallToolResult, any, error) {
+	type pv struct {
 		ID            string `json:"id"`
 		Name          string `json:"name"`
 		Configured    bool   `json:"configured"`
-		Connected     bool   `json:"connected"`
+		Connected     *bool  `json:"connected,omitempty"`
 		Account       string `json:"account,omitempty"`
 		OptionsSchema any    `json:"optionsSchema"`
 	}
 	out := struct {
+		Project       string `json:"project,omitempty"`
+		Note          string `json:"note,omitempty"`
 		InboxHostPath string `json:"inboxHostPath"`
 		Platforms     []pv   `json:"platforms"`
-	}{InboxHostPath: t.a.Cfg.InboxHostPath}
-	for _, p := range list {
-		out.Platforms = append(out.Platforms, pv{p.ID, p.DisplayName, p.Configured, p.Connected, p.AccountName, p.OptionsSchema})
+	}{InboxHostPath: t.a.Cfg.InboxHostPath, Platforms: []pv{}}
+
+	proj, err := t.a.ResolveProject(ctx, in.Project)
+	if err != nil && (in.Project != "" || app.KindOf(err) != app.KindInvalid) {
+		return nil, nil, err
+	}
+	if err == nil {
+		out.Project = proj.Slug
+		list, err := t.a.Platforms(ctx, proj.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, p := range list {
+			out.Platforms = append(out.Platforms, pv{p.ID, p.DisplayName, p.Configured, &p.Connected, p.AccountName, p.OptionsSchema})
+		}
+		return nil, out, nil
+	}
+	// Several projects and none chosen: platforms without connection status.
+	out.Note = "Connections differ per project; pass project or see list_projects."
+	for _, ad := range t.a.Registry.All() {
+		out.Platforms = append(out.Platforms, pv{ID: string(ad.ID()), Name: ad.DisplayName(), Configured: ad.Configured(), OptionsSchema: ad.OptionsSchema()})
 	}
 	return nil, out, nil
 }
@@ -193,8 +255,12 @@ func (t tools) getConstraints(ctx context.Context, _ *mcp.CallToolRequest, in pl
 }
 
 func (t tools) createPost(ctx context.Context, _ *mcp.CallToolRequest, in createPostIn) (*mcp.CallToolResult, any, error) {
+	proj, err := t.a.ResolveProject(ctx, in.Project)
+	if err != nil {
+		return nil, nil, err
+	}
 	v, err := t.a.CreatePost(ctx, app.CreatePostInput{
-		Title: in.Title, Caption: in.Caption, Hashtags: in.Hashtags, Platforms: in.Platforms,
+		ProjectID: proj.ID, Title: in.Title, Caption: in.Caption, Hashtags: in.Hashtags, Platforms: in.Platforms,
 		AspectStrategy: in.AspectStrategy, CreatedBy: "mcp",
 	})
 	return post(v, err)
@@ -287,12 +353,21 @@ func (t tools) getPost(ctx context.Context, _ *mcp.CallToolRequest, in postIn) (
 }
 
 func (t tools) listPosts(ctx context.Context, _ *mcp.CallToolRequest, in listIn) (*mcp.CallToolResult, any, error) {
-	list, err := t.a.ListPosts(ctx, in.Status, in.Platform)
+	var projectID int64
+	if in.Project != "" {
+		proj, err := t.a.ResolveProject(ctx, in.Project)
+		if err != nil {
+			return nil, nil, err
+		}
+		projectID = proj.ID
+	}
+	list, err := t.a.ListPosts(ctx, projectID, in.Status, in.Platform)
 	if err != nil {
 		return nil, nil, err
 	}
 	type item struct {
 		ID        int64    `json:"id"`
+		Project   string   `json:"project"`
 		Title     string   `json:"title"`
 		Status    string   `json:"status"`
 		Platforms []string `json:"platforms"`
@@ -301,7 +376,7 @@ func (t tools) listPosts(ctx context.Context, _ *mcp.CallToolRequest, in listIn)
 	}
 	out := []item{}
 	for _, v := range list {
-		it := item{ID: v.ID, Title: v.Title, Status: v.Status, Platforms: []string{}, Updated: v.UpdatedAt.Local().Format("2006-01-02 15:04"), ReviewURL: v.ReviewURL}
+		it := item{ID: v.ID, Project: v.Project.Slug, Title: v.Title, Status: v.Status, Platforms: []string{}, Updated: v.UpdatedAt.Local().Format("2006-01-02 15:04"), ReviewURL: v.ReviewURL}
 		for _, tg := range v.Targets {
 			if tg.Enabled {
 				it.Platforms = append(it.Platforms, tg.Platform+":"+tg.Status)
@@ -392,6 +467,7 @@ type targetOut struct {
 
 type postOut struct {
 	ID             int64       `json:"id"`
+	Project        string      `json:"project"`
 	Title          string      `json:"title"`
 	Status         string      `json:"status"`
 	Caption        string      `json:"caption"`
@@ -416,7 +492,7 @@ type videoOut struct {
 
 func summarize(v app.PostView) postOut {
 	o := postOut{
-		ID: v.ID, Title: v.Title, Status: v.Status, Caption: v.Caption, Hashtags: v.Hashtags,
+		ID: v.ID, Project: v.Project.Slug, Title: v.Title, Status: v.Status, Caption: v.Caption, Hashtags: v.Hashtags,
 		AspectStrategy: v.AspectStrategy, CoverMs: v.CoverMs, Ready: v.Ready, ApprovalValid: v.ApprovalValid,
 		CanPublish: v.CanPublish, ReviewURL: v.ReviewURL, Targets: []targetOut{},
 	}

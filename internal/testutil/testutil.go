@@ -163,18 +163,28 @@ func NewApp(t *testing.T, fakes ...*FakeAdapter) *app.App {
 	return a
 }
 
-// Connect runs the OAuth flow against a fake platform.
+// Project is the project every new database starts with.
+const Project int64 = 1
+
+// Connect runs the OAuth flow against a fake platform for the first project.
 func Connect(t *testing.T, a *app.App, platformID string) {
 	t.Helper()
+	ConnectProject(t, a, Project, platformID)
+}
+
+// ConnectProject runs the OAuth flow against a fake platform for a project.
+func ConnectProject(t *testing.T, a *app.App, projectID int64, platformID string) {
+	t.Helper()
 	ctx := context.Background()
-	if _, err := a.StartConnect(ctx, platformID); err != nil {
+	if _, err := a.StartConnect(ctx, projectID, platformID); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.Store.SaveOAuthState(ctx, "state-"+platformID, platformID, "verifier"); err != nil {
+	state := fmt.Sprintf("state-%d-%s", projectID, platformID)
+	if err := a.Store.SaveOAuthState(ctx, state, store.OAuthState{ProjectID: projectID, Platform: platformID, Verifier: "verifier"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.FinishConnect(ctx, platformID, "code", "state-"+platformID); err != nil {
-		t.Fatal(err)
+	if pid, err := a.FinishConnect(ctx, platformID, "code", state); err != nil || pid != projectID {
+		t.Fatalf("finish connect: project %d, %v", pid, err)
 	}
 }
 

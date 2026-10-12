@@ -165,7 +165,7 @@ func (a *App) runPublish(ctx context.Context, raw json.RawMessage) error {
 		if err := a.Store.SetTargetState(ctx, tv.ID, store.TargetState{Status: "publishing", Stage: "starting"}); err != nil {
 			return platform.PublishResult{}, err
 		}
-		token, err := a.token(ctx, ad)
+		token, err := a.token(ctx, v.ProjectID, ad)
 		if err != nil {
 			return platform.PublishResult{}, err
 		}
@@ -298,7 +298,7 @@ func (a *App) CheckLive(ctx context.Context, id int64) (PostView, error) {
 		if !ok || !can {
 			continue
 		}
-		token, err := a.token(ctx, ad)
+		token, err := a.token(ctx, v.ProjectID, ad)
 		if err != nil {
 			return v, err
 		}
@@ -340,7 +340,7 @@ func (a *App) Stats(ctx context.Context, id int64) (map[string]platform.Stats, e
 		if !ok || !can {
 			continue
 		}
-		token, err := a.token(ctx, ad)
+		token, err := a.token(ctx, v.ProjectID, ad)
 		if err != nil {
 			out[t.Platform] = platform.Stats{Note: err.Error(), At: time.Now()}
 			continue

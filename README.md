@@ -3,6 +3,7 @@
 Write **one post**, let PowerPoster convert the video for every platform, **review** exactly what will be uploaded, then **publish** to Instagram Reels and TikTok. Claude can prepare posts for you through **MCP**.
 
 - **One post, many platforms** — shared caption and hashtags, with per-platform overrides and options.
+- **Projects** — one per game or brand, each with its own brand profile, defaults for new posts and platform accounts. Switch projects in the header.
 - **Automatic conversion** — 4K/120 fps gameplay becomes 1080×1920 H.264 at ≤60 fps with a blurred background, crop, or black bars. Platforms that need the same file share one encode.
 - **Draft → Review → Publish** — approval is tied to the exact content. Change anything afterwards and the post goes back to draft.
 - **Claude integration** — an MCP server lets Claude create drafts, attach videos and check them. By default only you can publish.
@@ -120,6 +121,20 @@ The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip thos
 
 ---
 
+## Projects
+
+Each game or brand is a **project**. Every post belongs to one project, and each project has its own:
+
+- **Brand profile** (game name, link, default hashtags, tone notes) that Claude uses for captions,
+- **defaults for new posts** (platforms, how video is fitted to 9:16),
+- **platform accounts**: connect a different Instagram and TikTok account per project.
+
+Pick the project in the header; the post list and *Settings → Project* follow it. Add, rename or delete (empty) projects under *Settings → Projects*. App credentials in `.env` (Meta app, TikTok app) are shared by all projects: add each project's Instagram account as a tester of the same Meta app, and each TikTok account as a target user of the same TikTok app.
+
+When connecting the account of a second project, sign out of the first account on the platform's website (or use a private window) first, otherwise the platform signs you straight back in with the old account.
+
+Existing data from before projects were added becomes the first project, named after the game name in your brand profile.
+
 ## Using it with Claude (MCP)
 
 PowerPoster serves MCP (Streamable HTTP) at `http://127.0.0.1:4000/mcp`. To connect Claude Code:
@@ -130,13 +145,14 @@ claude mcp add --transport http powerposter http://127.0.0.1:4000/mcp
 
 Then ask, for example:
 
-> Make a 30-second reel from `inbox/raid.mp4` for Instagram and TikTok, write an English caption in our brand voice and give me the review link.
+> Make a 30-second reel for donnervolk-online from `inbox/raid.mp4` for Instagram and TikTok, write an English caption in the project's brand voice and give me the review link.
 
 | Tool | What it does |
 |---|---|
-| `list_platforms` | Shows platforms, connection status, option schemas and the inbox folder |
+| `list_projects` | Shows the projects with brand profile, default platforms and connected accounts |
+| `list_platforms` | Shows platforms, a project's connection status, option schemas and the inbox folder |
 | `get_platform_constraints` | Returns resolution, fps, duration, size and caption limits |
-| `create_post` | Creates a draft (brand hashtags and default platforms apply) |
+| `create_post` | Creates a draft in a project (its hashtags and default platforms apply). `project` can be left out while there is only one project |
 | `attach_media` | Attaches a video by path. The path **must be inside the inbox folder** |
 | `upload_media` | Sends a small file (≤ 50 MB) as base64, for files outside the inbox |
 | `update_post` / `set_target_options` | Edit caption, hashtags, fill mode, cover frame and per-platform settings |
@@ -145,7 +161,7 @@ Then ask, for example:
 | `publish_post` | Publishes **approved** posts only, and only if you enabled it (see below) |
 | `get_publish_status` | Shows progress, links and errors per platform |
 
-Resources: `powerposter://brand` (game name, link, hashtags, tone notes from Settings) and `powerposter://platforms/<id>/constraints`.
+Resources: `powerposter://brand` (game name, link, hashtags, tone notes of every project) and `powerposter://platforms/<id>/constraints`.
 
 **Inbox folder:** Claude passes paths as it sees them on your machine (`C:\…\power-poster\inbox\clip.mp4`), and PowerPoster maps them to its own view (`/inbox/clip.mp4` in Docker). Point `INBOX_HOST_PATH` at the folder where your video tools already save their output, and nothing needs copying.
 

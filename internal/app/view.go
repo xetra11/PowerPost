@@ -50,6 +50,7 @@ type TargetView struct {
 
 type PostView struct {
 	store.Post
+	Project       ProjectRef                 `json:"project"`
 	Asset         *AssetView                 `json:"asset"`
 	CoverURL      string                     `json:"coverUrl"`      // cover preview (video frame or custom image)
 	CoverFrameURL string                     `json:"coverFrameUrl"` // video frame at coverMs
@@ -72,6 +73,11 @@ func (a *App) buildView(ctx context.Context, p store.Post) (PostView, error) {
 		EditURL:   fmt.Sprintf("%s/posts/%d", a.Cfg.BaseURL, p.ID),
 		ReviewURL: fmt.Sprintf("%s/posts/%d/review", a.Cfg.BaseURL, p.ID),
 	}
+	proj, err := a.Store.GetProject(ctx, p.ProjectID)
+	if err != nil {
+		return v, fmt.Errorf("project of post %d: %w", p.ID, err)
+	}
+	v.Project = ProjectRef{ID: proj.ID, Slug: proj.Slug, Name: proj.Name}
 	assets, err := a.Store.ListAssets(ctx, p.ID)
 	if err != nil {
 		return v, err
@@ -177,7 +183,7 @@ func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.P
 	}
 
 	// Account (a pasted token works without app credentials)
-	if conn, err := a.Store.GetConnection(ctx, string(id)); errors.Is(err, store.ErrNotFound) {
+	if conn, err := a.Store.GetConnection(ctx, p.ProjectID, string(id)); errors.Is(err, store.ErrNotFound) {
 		if ad.Configured() || isImporter(ad) {
 			add(platform.SeverityError, platform.ScopeAccount, "NOT_CONNECTED", fmt.Sprintf("Connect your %s account in Settings.", ad.DisplayName()), "")
 		} else {
