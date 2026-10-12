@@ -379,14 +379,14 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	if err != nil {
 		return platform.PublishResult{}, fmt.Errorf("init upload: %w", err)
 	}
-	pc.Log("publish_id %s", init.PublishID)
+	pc.Log("publish_id %s, %d bytes in %d chunk(s)", init.PublishID, st.Size(), count)
 
 	if err := a.uploadChunks(ctx, init.UploadURL, t.FilePath, st.Size(), chunk, count, pc); err != nil {
 		return platform.PublishResult{RemoteID: init.PublishID}, fmt.Errorf("upload: %w", err)
 	}
 
 	pc.Progress("processing on TikTok")
-	return a.waitDone(ctx, token, init.PublishID, o.Mode, ci.CreatorUsername)
+	return a.waitDone(ctx, pc, token, init.PublishID, o.Mode, ci.CreatorUsername)
 }
 
 func (a *Adapter) uploadChunks(ctx context.Context, uploadURL, path string, size, chunk, count int64, pc platform.PublishContext) error {
@@ -413,17 +413,25 @@ func (a *Adapter) uploadChunks(ctx context.Context, uploadURL, path string, size
 	return nil
 }
 
-func (a *Adapter) waitDone(ctx context.Context, token, publishID, mode, username string) (platform.PublishResult, error) {
+func (a *Adapter) waitDone(ctx context.Context, pc platform.PublishContext, token, publishID, mode, username string) (platform.PublishResult, error) {
 	res := platform.PublishResult{RemoteID: publishID}
 	deadline := time.Now().Add(a.PollTimeout)
+	last := ""
 	for {
 		var s struct {
 			Status     string            `json:"status"`
 			FailReason string            `json:"fail_reason"`
 			PostIDs    []json.RawMessage `json:"publicaly_available_post_id"` // sic (TikTok spelling); numbers or strings
+			Uploaded   int64             `json:"uploaded_bytes"`
+			Downloaded int64             `json:"downloaded_bytes"`
 		}
 		if err := a.api(ctx, token, http.MethodPost, "/v2/post/publish/status/fetch/", map[string]any{"publish_id": publishID}, &s); err != nil {
 			return res, fmt.Errorf("status: %w", err)
+		}
+		// Shown live on the review page; the attempt log is only saved at the end.
+		if cur := fmt.Sprintf("%s, %d bytes uploaded, %d downloaded", s.Status, s.Uploaded, s.Downloaded); cur != last {
+			last = cur
+			pc.Progress(fmt.Sprintf("processing on TikTok (%s)", cur))
 		}
 		switch s.Status {
 		case "SEND_TO_USER_INBOX":
