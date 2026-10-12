@@ -131,6 +131,7 @@ export interface Platform {
   redirectUri: string
   missingSettings: string[]
   canImportToken: boolean
+  tokenPrompt: { label: string; help: string; only: boolean } | null
   constraints: { caption: { maxChars: number; countUtf16: boolean } }
   optionsSchema: { properties: Record<string, SchemaProp> }
 }

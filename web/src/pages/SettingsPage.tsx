@@ -288,18 +288,20 @@ function ProjectSettingsForm({ project, onSaved, onError }: { project: Project; 
                           Redirect URI to register: <code>{p.redirectUri}</code>
                         </small>
                       )}
-                      {p.canImportToken && !p.connected && <TokenForm projectId={project.id} platform={p} onDone={loadPlatforms} onError={onError} />}
+                      {p.canImportToken && (!p.connected || p.tokenPrompt?.only) && <TokenForm projectId={project.id} platform={p} onDone={loadPlatforms} onError={onError} />}
                     </td>
                     <td className="right">
                       <div className="actions">
-                        <button
-                          className="small"
-                          onClick={() => connect(p.id)}
-                          disabled={p.missingSettings.length > 0}
-                          title={p.missingSettings.length > 0 ? `Missing in .env: ${p.missingSettings.join(', ')}` : undefined}
-                        >
-                          {p.connected ? 'Reconnect' : 'Connect'}
-                        </button>
+                        {!p.tokenPrompt?.only && (
+                          <button
+                            className="small"
+                            onClick={() => connect(p.id)}
+                            disabled={p.missingSettings.length > 0}
+                            title={p.missingSettings.length > 0 ? `Missing in .env: ${p.missingSettings.join(', ')}` : undefined}
+                          >
+                            {p.connected ? 'Reconnect' : 'Connect'}
+                          </button>
+                        )}
                         {p.connected && (
                           <button className="small secondary outline" onClick={() => disconnect(p.id)}>
                             Disconnect
@@ -409,10 +411,15 @@ function ProjectSettingsForm({ project, onSaved, onError }: { project: Project; 
   )
 }
 
-/** Connect with a token generated in the platform's developer dashboard (no tunnel needed). */
+/**
+ * Connect by pasting a secret: a token generated in the platform's developer
+ * dashboard (no tunnel needed), or for webhook-only platforms like Discord the webhook URL.
+ */
 function TokenForm({ projectId, platform, onDone, onError }: { projectId: number; platform: Platform; onDone: () => void; onError: (msg: string) => void }) {
   const [token, setToken] = useState('')
   const [busy, setBusy] = useState(false)
+  const prompt = platform.tokenPrompt ?? { label: 'Access token', help: '', only: false }
+  const noun = prompt.label.charAt(0).toLowerCase() + prompt.label.slice(1) // "access token", "webhook URL"
   const submit = async () => {
     setBusy(true)
     try {
@@ -425,16 +432,15 @@ function TokenForm({ projectId, platform, onDone, onError }: { projectId: number
       setBusy(false)
     }
   }
+  const summary = !prompt.only ? `Or paste an ${noun}` : platform.connected ? `Use another ${noun}` : `Paste the ${noun}`
   return (
-    <details className="token-form">
-      <summary>Or paste an access token</summary>
-      <small className="hint">
-        Meta dashboard → your app → Instagram → API setup with Instagram login → <em>Generate access tokens</em> → add your account → Generate. No tunnel needed.
-      </small>
+    <details className="token-form" open={prompt.only && !platform.connected}>
+      <summary>{summary}</summary>
+      {prompt.help && <small className="hint">{prompt.help}</small>}
       <div className="code-row">
-        <input type="password" placeholder="Access token" value={token} onChange={(e) => setToken(e.target.value)} aria-label={`${platform.displayName} access token`} />
+        <input type="password" placeholder={prompt.label} value={token} onChange={(e) => setToken(e.target.value)} aria-label={`${platform.displayName} ${noun}`} />
         <button className="small" onClick={submit} disabled={!token.trim() || busy} aria-busy={busy}>
-          Save token
+          Save
         </button>
       </div>
     </details>

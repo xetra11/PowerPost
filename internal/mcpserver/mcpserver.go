@@ -20,7 +20,7 @@ import (
 	"powerposter/internal/platform"
 )
 
-const instructions = `PowerPoster prepares and publishes social media posts (Instagram Reels, TikTok videos) for a game studio.
+const instructions = `PowerPoster prepares and publishes social media posts (Instagram Reels, TikTok videos, Discord channel posts) for a game studio.
 
 Workflow:
 1. list_projects to pick the project (each game/brand is a project with its own brand voice, hashtags and accounts), get_platform_constraints for limits.
@@ -103,7 +103,7 @@ type tools struct{ a *app.App }
 type empty struct{}
 
 type platformIn struct {
-	Platform string `json:"platform" jsonschema:"platform id, e.g. instagram or tiktok"`
+	Platform string `json:"platform" jsonschema:"platform id, e.g. instagram, tiktok or discord"`
 }
 
 type postIn struct {

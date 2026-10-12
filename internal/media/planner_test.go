@@ -140,3 +140,23 @@ func TestParseProbeRotation(t *testing.T) {
 		t.Fatalf("unexpected info %+v", i)
 	}
 }
+
+func TestPlanSmallSizeLimitCapsBitrate(t *testing.T) {
+	discord := reels
+	discord.MaxBytes = 10 << 20
+	src := compliant() // 20 s, 20 MB
+	p := NewPlan(src, discord, StrategyBlur, "libx264")
+	// 10 MiB * 8 * 0.9 / 20 s = 3774 kbps, minus 160 kbps audio.
+	if p.VideoCopy || p.MaxrateKbps != 3614 {
+		t.Fatalf("unexpected plan %+v", p)
+	}
+	if !strings.Contains(strings.Join(p.Args("i", "o"), " "), "-maxrate 3614k") {
+		t.Error("maxrate not passed to ffmpeg")
+	}
+
+	// A large limit leaves the default cap alone (Instagram/TikTok plans are unchanged).
+	src.Width, src.Height = 1920, 1080
+	if p := NewPlan(src, reels, StrategyBlur, "libx264"); p.MaxrateKbps != defaultMaxrateKbps {
+		t.Errorf("maxrate %d, want %d", p.MaxrateKbps, defaultMaxrateKbps)
+	}
+}

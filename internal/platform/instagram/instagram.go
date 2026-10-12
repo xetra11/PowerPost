@@ -404,6 +404,14 @@ func (a *Adapter) MissingSettings() []string {
 	return m
 }
 
+// TokenPrompt implements platform.TokenPrompter.
+func (a *Adapter) TokenPrompt() platform.TokenPrompt {
+	return platform.TokenPrompt{
+		Label: "Access token",
+		Help:  "Meta dashboard → your app → Instagram → API setup with Instagram login → Generate access tokens → add your account → Generate. No tunnel needed.",
+	}
+}
+
 // ImportToken implements platform.TokenImporter for tokens generated in the
 // Meta dashboard ("Generate access tokens"). Those are long-lived (~60 days)
 // and are refreshed automatically like OAuth tokens.

@@ -13,19 +13,20 @@ import (
 )
 
 type PlatformView struct {
-	ID              string               `json:"id"`
-	DisplayName     string               `json:"displayName"`
-	Configured      bool                 `json:"configured"`
-	Connected       bool                 `json:"connected"`
-	AccountName     string               `json:"accountName"`
-	ExpiresAt       *time.Time           `json:"expiresAt"`
-	RedirectURI     string               `json:"redirectUri"`
-	MissingSettings []string             `json:"missingSettings"` // .env entries needed before Connect works
-	CanImportToken  bool                 `json:"canImportToken"`  // a dashboard-generated token can be pasted instead
-	SupportedKinds  []platform.PostKind  `json:"supportedKinds"`
-	Constraints     platform.Constraints `json:"constraints"`
-	OptionsSchema   any                  `json:"optionsSchema"`
-	DefaultOptions  any                  `json:"defaultOptions"`
+	ID              string                `json:"id"`
+	DisplayName     string                `json:"displayName"`
+	Configured      bool                  `json:"configured"`
+	Connected       bool                  `json:"connected"`
+	AccountName     string                `json:"accountName"`
+	ExpiresAt       *time.Time            `json:"expiresAt"`
+	RedirectURI     string                `json:"redirectUri"`
+	MissingSettings []string              `json:"missingSettings"` // .env entries needed before Connect works
+	CanImportToken  bool                  `json:"canImportToken"`  // a dashboard-generated token can be pasted instead
+	TokenPrompt     *platform.TokenPrompt `json:"tokenPrompt"`     // what to paste (with CanImportToken)
+	SupportedKinds  []platform.PostKind   `json:"supportedKinds"`
+	Constraints     platform.Constraints  `json:"constraints"`
+	OptionsSchema   any                   `json:"optionsSchema"`
+	DefaultOptions  any                   `json:"defaultOptions"`
 }
 
 func (a *App) Platforms(ctx context.Context, projectID int64) ([]PlatformView, error) {
@@ -41,6 +42,7 @@ func (a *App) Platforms(ctx context.Context, projectID int64) ([]PlatformView, e
 			RedirectURI:     a.redirectURI(ad),
 			MissingSettings: a.missingSettings(ad),
 			CanImportToken:  isImporter(ad),
+			TokenPrompt:     tokenPrompt(ad),
 			SupportedKinds:  ad.SupportedKinds(),
 			Constraints:     ad.Constraints(platform.KindVideo),
 			OptionsSchema:   ad.OptionsSchema(),
@@ -65,6 +67,9 @@ func (a *App) Platforms(ctx context.Context, projectID int64) ([]PlatformView, e
 // redirectURI is where the platform sends the browser after sign-in: the public
 // tunnel URL if configured, otherwise http://localhost for platforms that allow it.
 func (a *App) redirectURI(ad platform.Adapter) string {
+	if tokenOnly(ad) {
+		return ""
+	}
 	path := "/oauth/" + string(ad.ID()) + "/callback"
 	if a.Cfg.PublicBaseURL != "" {
 		return a.Cfg.PublicBaseURL + path
@@ -104,6 +109,9 @@ func (a *App) StartConnect(ctx context.Context, projectID int64, id string) (str
 	ad, ok := a.Registry.Get(platform.ID(id))
 	if !ok {
 		return "", notFound("unknown platform %q", id)
+	}
+	if tokenOnly(ad) {
+		return "", invalid("%s has no sign-in; paste the %s in Settings instead", ad.DisplayName(), lowerFirst(tokenPrompt(ad).Label))
 	}
 	if !ad.Configured() {
 		return "", invalid("%s app credentials are missing. Add them to .env and restart — see README → Connecting platforms", ad.DisplayName())
@@ -288,7 +296,7 @@ func (a *App) missingSettings(ad platform.Adapter) []string {
 	} else if !ad.Configured() {
 		m = append(m, "app credentials")
 	}
-	if a.redirectURI(ad) == "" {
+	if a.redirectURI(ad) == "" && !tokenOnly(ad) {
 		m = append(m, "PUBLIC_BASE_URL")
 	}
 	return m
@@ -297,4 +305,29 @@ func (a *App) missingSettings(ad platform.Adapter) []string {
 func isImporter(ad platform.Adapter) bool {
 	_, ok := ad.(platform.TokenImporter)
 	return ok
+}
+
+func tokenPrompt(ad platform.Adapter) *platform.TokenPrompt {
+	if !isImporter(ad) {
+		return nil
+	}
+	if p, ok := ad.(platform.TokenPrompter); ok {
+		tp := p.TokenPrompt()
+		return &tp
+	}
+	return &platform.TokenPrompt{Label: "Access token"}
+}
+
+// tokenOnly reports whether the platform connects only by pasting a secret (no OAuth).
+func tokenOnly(ad platform.Adapter) bool {
+	tp := tokenPrompt(ad)
+	return tp != nil && tp.Only
+}
+
+// lowerFirst turns a label into a noun inside a sentence ("Webhook URL" → "webhook URL").
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
 }

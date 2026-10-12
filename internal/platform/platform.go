@@ -155,6 +155,20 @@ type TokenImporter interface {
 	ImportToken(ctx context.Context, accessToken string) (TokenSet, error)
 }
 
+// TokenPrompt tells the UI what a TokenImporter asks for.
+type TokenPrompt struct {
+	Label string `json:"label"` // e.g. "Access token", "Webhook URL"
+	Help  string `json:"help"`  // where to find it
+	// Only means there is no OAuth sign-in: pasting is the only way to connect.
+	Only bool `json:"only"`
+}
+
+// TokenPrompter is optionally implemented by TokenImporters to describe the
+// secret they expect.
+type TokenPrompter interface {
+	TokenPrompt() TokenPrompt
+}
+
 // LocalRedirector is optionally implemented by platforms that accept an
 // http://localhost OAuth redirect (e.g. TikTok desktop apps), so no tunnel is needed.
 type LocalRedirector interface {

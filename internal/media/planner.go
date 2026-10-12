@@ -120,8 +120,30 @@ func NewPlan(src Info, c VideoConstraints, s Strategy, encoder string) Plan {
 		if c.MaxBitrateKbps > 0 && c.MaxBitrateKbps < p.MaxrateKbps {
 			p.MaxrateKbps = c.MaxBitrateKbps
 		}
+		// A small file limit (e.g. Discord's 10 MB) caps the bitrate so the encode fits.
+		if b := sizeBudgetKbps(src, c, p.Audio); b > 0 && b < p.MaxrateKbps {
+			p.MaxrateKbps = b
+			p.Fixes = append(p.Fixes, fmt.Sprintf("Video bitrate ≤%d kbps to stay under %s", b, FormatBytes(c.MaxBytes)))
+		}
 	}
 	return p
+}
+
+// minBudgetKbps is the floor for size-capped encodes; below it the video is
+// unwatchable and the size check reports the file as too large instead.
+const minBudgetKbps = 300
+
+// sizeBudgetKbps is the video bitrate that keeps the output under MaxBytes
+// (with 10% headroom for container overhead and rate-control drift), or 0.
+func sizeBudgetKbps(src Info, c VideoConstraints, audio string) int {
+	if c.MaxBytes <= 0 || src.Duration <= 0 {
+		return 0
+	}
+	total := int(float64(c.MaxBytes) * 8 * 0.9 / src.Duration / 1000)
+	if audio == "aac" {
+		total -= 160
+	}
+	return max(total, minBudgetKbps)
 }
 
 // Args builds the ffmpeg command line (without the binary name).

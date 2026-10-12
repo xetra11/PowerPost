@@ -1,6 +1,6 @@
 # PowerPoster
 
-Write **one post**, let PowerPoster convert the video for every platform, **review** exactly what will be uploaded, then **publish** to Instagram Reels and TikTok. Claude can prepare posts for you through **MCP**.
+Write **one post**, let PowerPoster convert the video for every platform, **review** exactly what will be uploaded, then **publish** to Instagram Reels, TikTok and Discord. Claude can prepare posts for you through **MCP**.
 
 - **One post, many platforms** — shared caption and hashtags, with per-platform overrides and options.
 - **Projects** — one per game or brand, each with its own brand profile, defaults for new posts and platform accounts. Switch projects in the header.
@@ -171,7 +171,7 @@ Resources: `powerposter://brand` (game name, link, hashtags, tone notes of every
 
 ## Connecting platforms
 
-Both platforms need an **HTTPS** redirect URL for signing in. PowerPoster has a second, internal listener (port 4001) that serves *only* the OAuth callbacks. Only that listener is exposed through a tunnel; the UI, the API and MCP stay on your machine.
+Instagram and TikTok need an **HTTPS** redirect URL for signing in. PowerPoster has a second, internal listener (port 4001) that serves *only* the OAuth callbacks. Only that listener is exposed through a tunnel; the UI, the API and MCP stay on your machine.
 
 ### 1. Tunnel
 
@@ -236,6 +236,20 @@ Things to know about TikTok:
 - **Required settings:** TikTok requires an explicit visibility choice (there is no default), the comment/Duet/Stitch toggles, and a commercial-content disclosure. Ads for your own game count as *"Your brand"*, labelled "Promotional content". The editor and review page show all of these.
 - **Music:** neither TikTok nor Instagram offers licensed sounds through their API, so bake the music into the video.
 
+### 4. Discord
+
+Discord needs no app, no tunnel and no sign-in: PowerPoster posts through a **channel webhook**.
+
+1. In Discord, right-click the channel → *Edit Channel* → *Integrations* → *Webhooks* → *New Webhook*. Its name and avatar are what the posts show as author. Then *Copy Webhook URL*.
+2. In PowerPoster: *Settings → Project → Connections → Discord*, paste the URL and click **Save**. Each project can post to its own channel.
+
+Things to know about Discord:
+- **Upload limit:** Discord only accepts files up to the server's limit: 10 MB without boosts, 50 MB at boost level 2, 100 MB at level 3. PowerPoster compresses the video to fit `DISCORD_MAX_UPLOAD_MB` (default 10) and warns on the review page when that makes it blurry. Shorter clips look better.
+- **Notify:** per post, choose to ping nobody (default), `@here` or `@everyone`. Mentions written in the caption never ping.
+- **Forum channels** need a *Forum post title* (an option on the post); text channels leave it empty.
+- **Stats:** likes are the emoji reactions on the message, comments are replies in a thread started from it. Deleting the message in Discord shows the post as *Removed*.
+- The webhook URL is a secret: anyone who has it can post to the channel. PowerPoster stores it encrypted. If it leaks, delete the webhook in Discord and paste a new one.
+
 ---
 
 ## Configuration
@@ -254,6 +268,7 @@ All settings are environment variables, read from `.env` (native) or passed in b
 | `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET` | — | Meta app credentials |
 | `INSTAGRAM_API_VERSION` | `v23.0` | Instagram Graph API version |
 | `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` | — | TikTok app credentials |
+| `DISCORD_MAX_UPLOAD_MB` | `10` | Upload limit of your Discord server(s) in MB (10, 50 or 100); videos are compressed to fit |
 | `FFMPEG_ENCODER` | `libx264` | `libx264` (CPU) or `h264_nvenc` (NVIDIA) |
 | `MAX_PARALLEL_ENCODES` | `1` | Number of conversions that run at the same time |
 | `FFMPEG_PATH` / `FFPROBE_PATH` | `ffmpeg` / `ffprobe` | Paths to the binaries if they aren't on `PATH` |
@@ -277,6 +292,7 @@ internal/
   platform/             adapter interface, caption rules, registry
     instagram/          Instagram Reels (resumable upload)
     tiktok/             TikTok Content Posting API (chunked upload, inbox/direct)
+    discord/            Discord channel webhook (multipart upload)
   jobs/                 background job queue (stored in SQLite, survives restarts)
   store/                SQLite schema and queries
   secret/               AES-GCM token encryption
@@ -291,7 +307,7 @@ docs/logo/              logo source images
    - `Constraints`: the platform's media and caption limits, as data. The converter and validation use them automatically.
    - `OptionsSchema`: a JSON Schema for platform settings. The UI form and the MCP tool input are generated from it.
    - `Validate` and `ReviewNotices`: rules and texts specific to the platform.
-   - `Auth()`: the OAuth flow.
+   - `Auth()`: the OAuth flow. Platforms without OAuth implement `TokenImporter` and `TokenPrompter` (with `Only: true`) instead, like Discord's webhook URL.
    - `Publish`: the upload, which blocks until the platform reports success or failure.
 2. Register it in `cmd/powerposter/main.go` (`platform.NewRegistry(...)`).
 3. Add tests against an `httptest` fake server, like `internal/platform/tiktok/tiktok_test.go`.

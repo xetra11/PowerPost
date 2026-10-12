@@ -22,6 +22,7 @@ import (
 	"powerposter/internal/mcpserver"
 	"powerposter/internal/media"
 	"powerposter/internal/platform"
+	"powerposter/internal/platform/discord"
 	"powerposter/internal/platform/instagram"
 	"powerposter/internal/platform/tiktok"
 	"powerposter/internal/secret"
@@ -84,6 +85,7 @@ func serve() error {
 	reg := platform.NewRegistry(
 		instagram.New(cfg.InstagramAppID, cfg.InstagramAppSecret, cfg.InstagramAPIVersion),
 		tiktok.New(cfg.TikTokClientKey, cfg.TikTokClientSecret),
+		discord.New(cfg.DiscordMaxUploadMB),
 	)
 	a := app.New(cfg, st, reg, runner, box, log)
 

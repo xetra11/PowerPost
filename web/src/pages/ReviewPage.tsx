@@ -286,7 +286,7 @@ function ReviewCard({
       />
       )}
       {r?.info && <small className="muted">{describeMedia(r.info)}</small>}
-      {(t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl) && (
+      {t.platform !== 'discord' && (t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl) && (
         <div className="cover-mini">
           <img src={t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl} alt="" />
           <span className="muted">

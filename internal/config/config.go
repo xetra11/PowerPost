@@ -34,6 +34,8 @@ type Config struct {
 	TikTokClientKey     string
 	TikTokClientSecret  string
 
+	DiscordMaxUploadMB int // upload limit of the Discord server(s): 10, 50 or 100
+
 	FFmpegPath         string
 	FFprobePath        string
 	FFmpegEncoder      string // libx264 | h264_nvenc
@@ -76,6 +78,12 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("MAX_PARALLEL_ENCODES must be a positive number")
 	}
 	c.MaxParallelEncodes = n
+
+	mb, err := strconv.Atoi(env("DISCORD_MAX_UPLOAD_MB", "10"))
+	if err != nil || mb < 1 {
+		return c, fmt.Errorf("DISCORD_MAX_UPLOAD_MB must be a positive number (10, 50 or 100)")
+	}
+	c.DiscordMaxUploadMB = mb
 
 	switch c.FFmpegEncoder {
 	case "libx264", "h264_nvenc":
