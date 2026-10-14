@@ -255,7 +255,12 @@ Things to know about TikTok:
   - **Direct**: posts right away. Until TikTok audits your app, direct posts are **private** (and need a private account). Apply for the audit in the developer portal to post publicly.
 - **Required settings:** TikTok requires an explicit visibility choice (there is no default), the comment/Duet/Stitch toggles, and a commercial-content disclosure. Ads for your own game count as *"Your brand"*, labelled "Promotional content". The editor and review page show all of these.
 - **Music:** neither TikTok nor Instagram offers licensed sounds through their API, so bake the music into the video.
-- **Photo posts:** TikTok only downloads photos from a public link on a **verified** domain, so they need the tunnel plus one-time verification. In the developer portal open your app → *URL properties* → add a **URL prefix** with your tunnel address (e.g. `https://name.ngrok-free.dev/`) and download the signature file (`tiktok….txt`). Save it into the inbox folder: PowerPoster serves exactly that file at the root of the tunnel, so you can click *Verify*. Nothing else from the inbox becomes public. The caption is sent as the photo description (up to 4000 characters), also in inbox mode. *Add recommended music* lets TikTok pick a sound for direct photo posts.
+- **Photo posts:** TikTok only downloads photos from a public link whose URL you verified, so they need the tunnel plus a one-time verification of the tunnel address:
+  1. In the developer portal open your app → *Verify properties* (*URL properties*) → **URL prefix**, and enter the tunnel address with a trailing slash, e.g. `https://name.ngrok-free.dev/`. A free ngrok domain can only be verified this way (there is no DNS access).
+  2. Download the signature file TikTok offers and save it into the `verify` folder inside the inbox (`inbox/verify/`). PowerPoster serves `.txt` files from that folder, and nothing else from the inbox, at the root of the tunnel.
+  3. Click *Verify*. The publish error names the exact prefix TikTok expects.
+
+  The caption is sent as the photo description (up to 4000 characters), also in inbox mode. *Add recommended music* lets TikTok pick a sound for direct photo posts.
 
 ### 4. Discord
 
@@ -350,7 +355,8 @@ Nothing else needs to change: the UI, the MCP tools, conversion and review pick 
 | Port 4000 is busy | Docker: set `PP_PORT`. Native: set `PP_PRIVATE_ADDR` and `PP_BASE_URL` |
 | A publish was interrupted by a restart | It's marked as failed. Check the platform before clicking *Retry*: the post may already be live |
 | Image post: "downloads images from a public link" | Instagram and TikTok fetch images themselves: set up the tunnel ([Connecting platforms](#1-tunnel)) |
-| TikTok photo post fails with `url_ownership_unverified` | Verify the tunnel domain as a URL prefix in the TikTok developer portal (see [TikTok](#3-tiktok) → Photo posts) |
+| TikTok photo post fails with `url_ownership_unverified` | Verify the tunnel address as a URL prefix in the TikTok developer portal (see [TikTok](#3-tiktok) → Photo posts) |
+| Instagram: "API access blocked (code 200)" | Meta rejects every call of the connected account, not just this post. Check the Meta app dashboard for alerts or restrictions and the Instagram app for notices about the account, then reconnect Instagram |
 
 ## Roadmap
 

@@ -487,8 +487,8 @@ func (s *Server) publicMedia(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, p)
 }
 
-// verificationFile serves a TikTok URL-prefix signature file (tiktok….txt)
-// dropped into the inbox, so the tunnel domain can be verified for photo posts.
+// verificationFile serves a site-verification file (e.g. TikTok's URL-prefix
+// signature file) from the inbox's verify folder at the root of the tunnel.
 func (s *Server) verificationFile(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.App.VerificationFile(r.PathValue("file"))
 	if !ok {

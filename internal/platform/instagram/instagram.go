@@ -482,6 +482,9 @@ func graphError(body []byte) string {
 	switch {
 	case e.Error.ErrorUserMsg != "":
 		return e.Error.ErrorUserMsg
+	case e.Error.Code == 200 && strings.Contains(e.Error.Message, "API access blocked"):
+		// Meta answers every call of this token like this; it's not about the post.
+		return fmt.Sprintf("%s (code 200). Instagram blocks all API calls of this account/app right now: check the Meta app dashboard for alerts or restrictions and the Instagram app for account notices, then reconnect Instagram in Settings", e.Error.Message)
 	case e.Error.Message != "":
 		return fmt.Sprintf("%s (code %d)", e.Error.Message, e.Error.Code)
 	default:

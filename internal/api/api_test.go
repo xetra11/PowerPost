@@ -185,16 +185,26 @@ func TestPublicMediaLinks(t *testing.T) {
 func TestTikTokVerificationFile(t *testing.T) {
 	s, private := newServer(t)
 	pub := s.PublicHandler()
-	for name, body := range map[string]string{"tiktokAbC123.txt": "tiktok-developers-site-verification=x", "secret.txt": "no", "clip.mp4": "no"} {
-		if err := os.WriteFile(filepath.Join(s.App.Cfg.InboxDir, name), []byte(body), 0o644); err != nil {
+	verify := filepath.Join(s.App.Cfg.InboxDir, "verify")
+	if err := os.MkdirAll(verify, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		filepath.Join(verify, "tiktokAbC123.txt"):       "tiktok-developers-site-verification=x",
+		filepath.Join(verify, "notes.md"):               "no",
+		filepath.Join(s.App.Cfg.InboxDir, "secret.txt"): "no",
+		filepath.Join(s.App.Cfg.InboxDir, "clip.mp4"):   "no",
+	}
+	for p, body := range files {
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if rec := do(pub, "GET", "/tiktokAbC123.txt", nil, nil); rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), "tiktok-developers") {
 		t.Fatalf("signature file: %d %q", rec.Code, rec.Body)
 	}
-	// Nothing else from the inbox is public.
-	for _, p := range []string{"/secret.txt", "/clip.mp4", "/tiktokMissing.txt", "/tiktok..txt"} {
+	// Only .txt files from inbox/verify are public.
+	for _, p := range []string{"/secret.txt", "/clip.mp4", "/notes.md", "/missing.txt", "/..txt", "/verify/tiktokAbC123.txt"} {
 		if rec := do(pub, "GET", p, nil, nil); rec.Code != 404 {
 			t.Errorf("public %s: %d", p, rec.Code)
 		}

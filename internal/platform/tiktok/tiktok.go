@@ -412,6 +412,16 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	return a.waitDone(ctx, pc, token, init.PublishID, o.Mode, ci.CreatorUsername, "video")
 }
 
+// urlPrefix is the scheme and host of a link with a trailing slash, the
+// prefix to verify for PULL_FROM_URL.
+func urlPrefix(link string) string {
+	u, err := url.Parse(link)
+	if err != nil {
+		return link
+	}
+	return u.Scheme + "://" + u.Host + "/"
+}
+
 // publishPhotos posts images as a TikTok photo post. TikTok only pulls photos
 // from public links on a domain verified in the developer portal.
 func (a *Adapter) publishPhotos(ctx context.Context, pc platform.PublishContext, t platform.ResolvedTarget, o Options, ci CreatorInfo) (platform.PublishResult, error) {
@@ -450,7 +460,7 @@ func (a *Adapter) publishPhotos(ctx context.Context, pc platform.PublishContext,
 	var init initResponse
 	if err := a.api(ctx, pc.Token.AccessToken, http.MethodPost, "/v2/post/publish/content/init/", body, &init); err != nil {
 		if strings.Contains(err.Error(), "url_ownership_unverified") {
-			return platform.PublishResult{}, fmt.Errorf("TikTok only pulls photos from a verified domain: add your tunnel domain under Manage apps → URL properties in the TikTok developer portal: %w", err)
+			return platform.PublishResult{}, fmt.Errorf("TikTok only pulls photos from a verified URL: in the TikTok developer portal, verify the URL prefix %s (Verify properties → URL prefix) and put the signature file it gives you into the inbox's \"verify\" folder (see README → TikTok → Photo posts): %w", urlPrefix(urls[0]), err)
 		}
 		return platform.PublishResult{}, fmt.Errorf("init photo post: %w", err)
 	}

@@ -107,16 +107,17 @@ func (a *App) PublicMediaURL(path string, ttl time.Duration) (string, bool) {
 	return a.Cfg.PublicBaseURL + "/public-media/" + payload + "." + a.Box.Sign(payload), true
 }
 
-var verificationRe = regexp.MustCompile(`^tiktok[A-Za-z0-9_-]+\.txt$`)
+var verificationRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*\.txt$`)
 
-// VerificationFile returns a TikTok signature file (tiktok….txt) from the
-// inbox. TikTok pulls photos only from verified URL prefixes; serving the
-// file at the tunnel's root verifies it. Nothing else in the inbox is public.
+// VerificationFile returns a site-verification file (e.g. TikTok's URL-prefix
+// signature file) from the inbox's "verify" folder. TikTok pulls photos only
+// from verified URL prefixes; serving the file at the tunnel's root verifies
+// it. Only .txt files in that folder are public, nothing else from the inbox.
 func (a *App) VerificationFile(name string) (string, bool) {
 	if !verificationRe.MatchString(name) {
 		return "", false
 	}
-	p := filepath.Join(a.Cfg.InboxDir, name)
+	p := filepath.Join(a.Cfg.InboxDir, "verify", name)
 	if st, err := os.Stat(p); err != nil || !st.Mode().IsRegular() {
 		return "", false
 	}

@@ -350,3 +350,10 @@ func TestPublishImageNeedsTunnel(t *testing.T) {
 		t.Fatalf("expected tunnel error before any upload, got %v (calls %v)", err, *calls)
 	}
 }
+
+func TestAccessBlockedHint(t *testing.T) {
+	msg := graphError([]byte(`{"error":{"message":"API access blocked.","type":"OAuthException","code":200}}`))
+	if !strings.Contains(msg, "API access blocked. (code 200)") || !strings.Contains(msg, "Meta app dashboard") {
+		t.Fatalf("message %q", msg)
+	}
+}

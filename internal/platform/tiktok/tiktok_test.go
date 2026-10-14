@@ -301,3 +301,9 @@ func TestPhotoPostInboxAndTunnel(t *testing.T) {
 		t.Fatalf("expected tunnel error, got %v", err)
 	}
 }
+
+func TestUrlPrefix(t *testing.T) {
+	if got := urlPrefix("https://name.ngrok-free.dev/public-media/1.jpg.123.sig"); got != "https://name.ngrok-free.dev/" {
+		t.Fatalf("prefix %q", got)
+	}
+}
