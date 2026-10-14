@@ -226,7 +226,9 @@ func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.P
 		}
 	} else if err == nil && conn.RefreshExpiresAt != nil && time.Now().After(*conn.RefreshExpiresAt) {
 		add(platform.SeverityError, platform.ScopeAccount, "CONNECTION_EXPIRED", fmt.Sprintf("Your %s connection expired. Reconnect it in Settings.", ad.DisplayName()), "")
-	} else if err == nil && conn.RefreshExpiresAt == nil && conn.ExpiresAt != nil && time.Now().After(*conn.ExpiresAt) {
+	} else if err == nil && conn.RefreshExpiresAt == nil && len(conn.RefreshTokenEnc) == 0 && conn.ExpiresAt != nil && time.Now().After(*conn.ExpiresAt) {
+		// Without a refresh token the access token's expiry ends the connection.
+		// A refresh token without an expiry (Google) is renewed at publish time.
 		add(platform.SeverityError, platform.ScopeAccount, "CONNECTION_EXPIRED", fmt.Sprintf("Your %s connection expired. Reconnect it in Settings.", ad.DisplayName()), "")
 	}
 
@@ -268,6 +270,9 @@ func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.P
 		}
 		if p.CoverCustom && id == "tiktok" {
 			add(platform.SeverityInfo, platform.ScopeContent, "COVER_FRAME_ONLY", fmt.Sprintf("TikTok can't use a custom cover image via the API; it uses the video frame at %.1f s.", float64(p.CoverMs)/1000), "")
+		}
+		if (p.CoverCustom || p.CoverMs > 0) && id == "youtube" {
+			add(platform.SeverityInfo, platform.ScopeContent, "COVER_NOT_USED", "YouTube picks the Shorts thumbnail itself; the cover can't be set through the API. Change it in the YouTube app if needed.", "")
 		}
 		if p.CoverCustom && id == "instagram" && a.Cfg.PublicBaseURL == "" {
 			add(platform.SeverityWarning, platform.ScopeContent, "COVER_NEEDS_TUNNEL", fmt.Sprintf("Custom cover images need the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL); without it Instagram uses the frame at %.1f s.", float64(p.CoverMs)/1000), "")

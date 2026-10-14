@@ -96,7 +96,7 @@ export function OptionsForm({
         return (
           <label key={key}>
             {prop.title ?? key}
-            <input disabled={disabled} value={(values[key] as string) ?? ''} onChange={(e) => onChange(key, e.target.value)} />
+            <input disabled={disabled} maxLength={prop.maxLength} value={(values[key] as string) ?? ''} onChange={(e) => onChange(key, e.target.value)} />
             {prop.description && <small className="hint">{prop.description}</small>}
           </label>
         )

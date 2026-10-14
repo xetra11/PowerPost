@@ -25,6 +25,7 @@ import (
 	"powerposter/internal/platform/discord"
 	"powerposter/internal/platform/instagram"
 	"powerposter/internal/platform/tiktok"
+	"powerposter/internal/platform/youtube"
 	"powerposter/internal/secret"
 	"powerposter/internal/store"
 	"powerposter/internal/tunnel"
@@ -85,6 +86,7 @@ func serve() error {
 	reg := platform.NewRegistry(
 		instagram.New(cfg.InstagramAppID, cfg.InstagramAppSecret, cfg.InstagramAPIVersion),
 		tiktok.New(cfg.TikTokClientKey, cfg.TikTokClientSecret),
+		youtube.New(cfg.YouTubeClientID, cfg.YouTubeClientSecret),
 		discord.New(cfg.DiscordMaxUploadMB),
 	)
 	a := app.New(cfg, st, reg, runner, box, log)

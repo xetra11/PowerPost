@@ -308,7 +308,7 @@ function ReviewCard({
       {images
         ? imagesReady && <small className="muted">{describeImages(t.renditions.flatMap((x) => (x.info ? [x.info] : [])))}</small>
         : r?.info && <small className="muted">{describeMedia(r.info)}</small>}
-      {t.platform !== 'discord' && (t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl) && (
+      {t.platform !== 'discord' && t.platform !== 'youtube' && (t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl) && (
         <div className="cover-mini">
           <img src={t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl} alt="" />
           <span className="muted">

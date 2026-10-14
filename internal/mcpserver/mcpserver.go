@@ -21,7 +21,7 @@ import (
 	"powerposter/internal/platform"
 )
 
-const instructions = `PowerPoster prepares and publishes social media posts for a game studio: videos (Instagram Reels, TikTok videos, Discord channel posts) and image posts (Instagram image and carousel posts, TikTok photo posts, Discord images).
+const instructions = `PowerPoster prepares and publishes social media posts for a game studio: videos (Instagram Reels, TikTok videos, YouTube Shorts, Discord channel posts) and image posts (Instagram image and carousel posts, TikTok photo posts, Discord images).
 
 A post has either one video or images. Several images are posted as a carousel (Instagram up to 10, TikTok up to 35, Discord up to 10 per post). The post type follows the attached media; there is nothing else to set.
 
@@ -32,6 +32,8 @@ Workflow:
 4. validate_post until "ready" is true (conversion runs in the background; poll every few seconds).
 5. Give the user the review link (get_review_link). The user approves on the review page.
 6. publish_post only works after the user approved the post, and only if they enabled "Allow Claude to publish" in Settings.
+
+YouTube takes videos only (up to 3 minutes). Its title is the target option "title"; left empty, the first line of the caption is used, so start the caption with a short, catchy line.
 
 Image posts on Instagram and TikTok need the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL), because both platforms download images from a public link; validate_post reports it when it is missing. Discord needs no tunnel.
 
@@ -110,7 +112,7 @@ type tools struct{ a *app.App }
 type empty struct{}
 
 type platformIn struct {
-	Platform string `json:"platform" jsonschema:"platform id, e.g. instagram, tiktok or discord"`
+	Platform string `json:"platform" jsonschema:"platform id, e.g. instagram, tiktok, youtube or discord"`
 }
 
 type postIn struct {

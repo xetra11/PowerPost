@@ -142,6 +142,7 @@ export interface SchemaProp {
   description?: string
   enum?: string[]
   'x-enumLabels'?: Record<string, string>
+  maxLength?: number
   default?: unknown
 }
 

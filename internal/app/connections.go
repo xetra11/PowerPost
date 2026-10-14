@@ -58,6 +58,8 @@ func (a *App) Platforms(ctx context.Context, projectID int64) ([]PlatformView, e
 			pv.ExpiresAt = conn.ExpiresAt
 			if conn.RefreshExpiresAt != nil {
 				pv.ExpiresAt = conn.RefreshExpiresAt // what matters to the user: when to reconnect
+			} else if len(conn.RefreshTokenEnc) > 0 {
+				pv.ExpiresAt = nil // refresh token without expiry (Google): no need to reconnect
 			}
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return nil, err

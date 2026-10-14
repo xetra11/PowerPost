@@ -1,6 +1,6 @@
 # PowerPoster
 
-Write **one post** with a video or images, let PowerPoster convert it for every platform, **review** exactly what will be uploaded, then **publish** to Instagram (Reels, image and carousel posts), TikTok (videos and photo posts) and Discord. Claude can prepare posts for you through **MCP**.
+Write **one post** with a video or images, let PowerPoster convert it for every platform, **review** exactly what will be uploaded, then **publish** to Instagram (Reels, image and carousel posts), TikTok (videos and photo posts), YouTube (Shorts) and Discord. Claude can prepare posts for you through **MCP**.
 
 - **One post, many platforms** — shared caption and hashtags, with per-platform overrides and options.
 - **Projects** — one per game or brand, each with its own brand profile, defaults for new posts and platform accounts. Switch projects in the header.
@@ -129,7 +129,7 @@ The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip thos
 
    **Framing & safe zones.** Below the media, you can place the video (or each image) by hand for every platform: drag it, zoom with the slider or mouse wheel, with that platform's safe zones drawn on top (Reels and TikTok cover different areas, TikTok photos more than videos). Images can also get another format per platform, e.g. 9:16 for a full-screen TikTok photo. "Apply to all platforms" uses the same framing everywhere; "Back to automatic" drops it. Framing re-converts only the affected platform.
 
-3. **Pick a cover** (videos only). Choose a frame of the video (used by Instagram and TikTok), or upload an image. Instagram uses the image (needs the tunnel); TikTok's API only accepts a video frame. Image posts have no separate cover: the first image is it.
+3. **Pick a cover** (videos only). Choose a frame of the video (used by Instagram and TikTok), or upload an image. Instagram uses the image (needs the tunnel); TikTok's API only accepts a video frame; YouTube picks the Shorts thumbnail itself. Image posts have no separate cover: the first image is it.
 4. **Review.** Phone-sized previews play the converted files (image posts as a swipeable carousel) inside an approximation of each app: Reels and TikTok UI on top of videos and TikTok photos, the Instagram feed around image posts. The safe-zone mode shows each platform's covered areas (for Instagram image posts: the 3:4 crop of the profile grid). You see the final caption for each platform, every automatic fix, and any remaining problems.
 5. **Approve.** This locks in the content. Any change afterwards (caption, options, video, images or their order) sends the post back to draft. The internal title doesn't count.
 6. **Publish** each platform on its own card, or all at once. Uploads run in the background. Each platform shows its progress, the link to the live post, or an error with a **Retry** button. If you delete an Instagram post in the app, the review page notices it (status *Removed*); you can then edit the post and publish it again.
@@ -264,7 +264,27 @@ Things to know about TikTok:
 
   The caption is sent as the photo description (up to 4000 characters), also in inbox mode. *Add recommended music* lets TikTok pick a sound for direct photo posts.
 
-### 4. Discord
+### 4. YouTube
+
+PowerPoster uploads to YouTube with the YouTube Data API v3. There is no separate Shorts API: a vertical video of up to 3 minutes becomes a Short automatically, and PowerPoster always delivers 1080×1920.
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/) create a project and enable the **YouTube Data API v3** (*APIs & Services → Library*).
+2. *Google Auth Platform*:
+   - **Branding:** app name, support e-mail, and the tunnel's home page, `/privacy` and `/terms` URLs. Google wants the home page domain verified: add it as a **URL prefix** property in the [Search Console](https://search.google.com/search-console), choose *HTML file*, and save the `google<hash>.html` file into `inbox/verify/` (served at the tunnel root, like TikTok's file).
+   - **Data access:** add the scopes `youtube.upload` and `youtube.readonly`.
+   - **Audience:** user type *External*, then **Publish app** (*In production*). In *Testing*, Google expires the sign-in after 7 days. Unverified apps show an "app not verified" warning when connecting; for your own account you can continue past it.
+   - **Clients:** create an OAuth client of type *Web application* and register the redirect URI shown in PowerPoster's Settings, `https://<tunnel>/oauth/youtube/callback` (and `http://localhost:4000/oauth/youtube/callback` for runs without a tunnel).
+3. Copy the client ID and secret into `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET`, restart, then click **Connect** and pick the account (or brand account) that owns the channel.
+
+Things to know about YouTube:
+- **Audit:** uploads from Google Cloud projects that haven't passed the YouTube API audit are **locked as private**, and can't be made public afterwards. Apply with the *YouTube API Services – Audit and Quota Extension* form; until then, use YouTube for testing only. The review page shows a note when a video was locked.
+- **Title and description:** the caption becomes the description (up to 5000 characters; YouTube ignores all hashtags if there are more than 60). The title is an option on the post; left empty, it's the first line of the caption, cut to 100 characters. YouTube rejects `<` and `>` in both.
+- **Required settings:** visibility, *Made for kids* (required by law), category (default *Gaming*), *Notify subscribers*, and the label for altered or synthetic content.
+- **Cover:** YouTube picks the Shorts thumbnail; the API can't set it. Change it in the YouTube app if needed.
+- **Quota:** a project gets 10,000 API units per day, and each upload costs about 1,600, so about 6 uploads per day. The quota resets at midnight Pacific time; more can be requested with the audit form.
+- **Stats:** views, likes and comments come from the video's statistics. Deleting the video on YouTube shows the post as *Removed*.
+
+### 5. Discord
 
 Discord needs no app, no tunnel and no sign-in: PowerPoster posts through a **channel webhook**.
 
@@ -298,6 +318,7 @@ All settings are environment variables, read from `.env` (native) or passed in b
 | `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET` | — | Meta app credentials |
 | `INSTAGRAM_API_VERSION` | `v23.0` | Instagram Graph API version |
 | `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` | — | TikTok app credentials |
+| `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` | — | Google Cloud OAuth client (Web application) for YouTube |
 | `DISCORD_MAX_UPLOAD_MB` | `10` | Upload limit of your Discord server(s) in MB (10, 50 or 100); videos are compressed to fit |
 | `FFMPEG_ENCODER` | `libx264` | `libx264` (CPU) or `h264_nvenc` (NVIDIA) |
 | `MAX_PARALLEL_ENCODES` | `1` | Number of conversions that run at the same time |
@@ -359,8 +380,11 @@ Nothing else needs to change: the UI, the MCP tools, conversion and review pick 
 | A publish was interrupted by a restart | It's marked as failed. Check the platform before clicking *Retry*: the post may already be live |
 | Image post: "downloads images from a public link" | Instagram and TikTok fetch images themselves: set up the tunnel ([Connecting platforms](#1-tunnel)) |
 | TikTok photo post fails with `url_ownership_unverified` | Verify the tunnel address as a URL prefix in the TikTok developer portal (see [TikTok](#3-tiktok) → Photo posts) |
+| YouTube video is private although *Public* was chosen | The Google Cloud project hasn't passed the YouTube API audit yet (see [YouTube](#4-youtube)) |
+| YouTube: `quotaExceeded` | The project's daily API quota is used up. Wait until midnight Pacific time, or request more with the audit form |
+| YouTube sign-in fails with "needs both permissions" | Connect again and leave both boxes on Google's consent screen checked |
 | Instagram: "API access blocked (code 200)" | Meta rejects every call of the connected account, not just this post. Check the Meta app dashboard for alerts or restrictions and the Instagram app for notices about the account, then reconnect Instagram |
 
 ## Roadmap
 
-Planned next: a history view grouped by platform, scheduling, more platforms (YouTube Shorts, X, Bluesky, Threads) and metrics.
+Planned next: a history view grouped by platform, scheduling, more platforms (X, Bluesky, Threads) and metrics.

@@ -36,6 +36,8 @@ type Config struct {
 	InstagramAPIVersion string
 	TikTokClientKey     string
 	TikTokClientSecret  string
+	YouTubeClientID     string
+	YouTubeClientSecret string
 
 	DiscordMaxUploadMB int // upload limit of the Discord server(s): 10, 50 or 100
 
@@ -69,6 +71,8 @@ func Load() (Config, error) {
 		InstagramAPIVersion: env("INSTAGRAM_API_VERSION", "v23.0"),
 		TikTokClientKey:     env("TIKTOK_CLIENT_KEY", ""),
 		TikTokClientSecret:  env("TIKTOK_CLIENT_SECRET", ""),
+		YouTubeClientID:     env("YOUTUBE_CLIENT_ID", ""),
+		YouTubeClientSecret: env("YOUTUBE_CLIENT_SECRET", ""),
 		FFmpegPath:          env("FFMPEG_PATH", "ffmpeg"),
 		FFprobePath:         env("FFPROBE_PATH", "ffprobe"),
 		FFmpegEncoder:       env("FFMPEG_ENCODER", "libx264"),
