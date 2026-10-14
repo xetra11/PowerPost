@@ -80,13 +80,17 @@ func (s *Server) PrivateHandler() http.Handler {
 	return s.logRequests(localHostOnly(s.App.Cfg.BaseURL, csrf.Handler(mux)))
 }
 
-// PublicHandler is what the tunnel exposes: OAuth callbacks and signed,
-// expiring links to converted videos (for platforms that fetch media).
+// PublicHandler is what the tunnel exposes: OAuth callbacks, signed,
+// expiring links to converted videos (for platforms that fetch media) and
+// the info, terms and privacy pages that the platforms' app reviews link to.
 func (s *Server) PublicHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /oauth/{platform}/callback", s.oauthCallback)
 	mux.HandleFunc("GET /public-media/{token}", s.publicMedia)
+	mux.HandleFunc("GET /{$}", s.legalPage(homePage))
+	mux.HandleFunc("GET /terms", s.legalPage(termsPage))
+	mux.HandleFunc("GET /privacy", s.legalPage(privacyPage))
 	mux.HandleFunc("GET /{file}", s.verificationFile)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)

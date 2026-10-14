@@ -133,8 +133,8 @@ func TestOAuthCallback(t *testing.T) {
 	if loc := rec.Header().Get("Location"); rec.Code != http.StatusFound || loc != "http://127.0.0.1:4000/settings?project=1&connected=fake" {
 		t.Fatalf("good state: %d %s", rec.Code, loc)
 	}
-	// The public listener exposes nothing else.
-	for _, p := range []string{"/api/posts", "/mcp", "/", "/media/originals/x"} {
+	// The public listener exposes nothing else (besides the info pages).
+	for _, p := range []string{"/api/posts", "/mcp", "/settings", "/media/originals/x"} {
 		if rec := do(pub, "GET", p, nil, nil); rec.Code != http.StatusNotFound {
 			t.Errorf("public %s: %d", p, rec.Code)
 		}
@@ -179,6 +179,33 @@ func TestPublicMediaLinks(t *testing.T) {
 	link, _ = s.App.PublicMediaURL(img, time.Hour)
 	if rec := do(pub, "GET", strings.TrimPrefix(link, "https://pp.example.com"), nil, nil); rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" {
 		t.Fatalf("image link: %d %s", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestPublicInfoPages(t *testing.T) {
+	s, private := newServer(t)
+	s.App.Cfg.LegalOperator = "Example Studio"
+	s.App.Cfg.LegalContact = "hello@example.com"
+	pub := s.PublicHandler()
+	for _, p := range []string{"/", "/terms", "/privacy"} {
+		rec := do(pub, "GET", p, nil, nil)
+		if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+			t.Fatalf("public %s: %d %s", p, rec.Code, rec.Header().Get("Content-Type"))
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "Example Studio") || !strings.Contains(body, "mailto:hello@example.com") {
+			t.Errorf("public %s misses operator or contact", p)
+		}
+		if strings.Contains(body, "127.0.0.1") || strings.Contains(body, "localhost") {
+			t.Errorf("public %s links to the local app", p)
+		}
+	}
+	// The public root is only the info page, never the app.
+	if rec := do(pub, "GET", "/index.html", nil, nil); rec.Code != 404 {
+		t.Errorf("public /index.html: %d", rec.Code)
+	}
+	if rec := do(private, "GET", "/privacy", nil, nil); strings.Contains(rec.Body.String(), "Privacy Policy") {
+		t.Fatal("private listener served the privacy page instead of the app")
 	}
 }
 

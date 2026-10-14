@@ -189,7 +189,7 @@ Resources: `powerposter://brand` (game name, link, hashtags, tone notes of every
 
 ## Connecting platforms
 
-Instagram and TikTok need an **HTTPS** redirect URL for signing in. PowerPoster has a second, internal listener (port 4001) that serves *only* the OAuth callbacks. Only that listener is exposed through a tunnel; the UI, the API and MCP stay on your machine.
+Instagram and TikTok need an **HTTPS** redirect URL for signing in. PowerPoster has a second, internal listener (port 4001) that serves *only* the OAuth callbacks, signed media links and three static pages for the platforms' app forms: an info page (`/`, the *website URL*), `/terms` and `/privacy`. Set `PP_LEGAL_OPERATOR` and `PP_LEGAL_CONTACT` so they name you. Only that listener is exposed through a tunnel; the UI, the API and MCP stay on your machine.
 
 ### 1. Tunnel
 
@@ -292,6 +292,7 @@ All settings are environment variables, read from `.env` (native) or passed in b
 | `NGROK_AUTOSTART` | `true` | Set to `false` to run ngrok yourself (Docker sets this) |
 | `PUBLIC_BASE_URL` | — | HTTPS URL of the tunnel, used for OAuth redirect URIs |
 | `TUNNEL_TOKEN` | — | Cloudflare tunnel token (Docker `tunnel` profile) |
+| `PP_LEGAL_OPERATOR` / `PP_LEGAL_CONTACT` | — | Operator name and contact e-mail on the public info, terms and privacy pages |
 | `INSTAGRAM_APP_ID` / `INSTAGRAM_APP_SECRET` | — | Meta app credentials |
 | `INSTAGRAM_API_VERSION` | `v23.0` | Instagram Graph API version |
 | `TIKTOK_CLIENT_KEY` / `TIKTOK_CLIENT_SECRET` | — | TikTok app credentials |

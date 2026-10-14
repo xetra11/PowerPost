@@ -28,6 +28,9 @@ type Config struct {
 
 	SecretKey string // base64, 32 bytes
 
+	LegalOperator string // who runs this installation, named on /terms and /privacy
+	LegalContact  string // contact e-mail shown on /terms and /privacy
+
 	InstagramAppID      string
 	InstagramAppSecret  string
 	InstagramAPIVersion string
@@ -59,6 +62,8 @@ func Load() (Config, error) {
 		NgrokAutostart:      env("NGROK_AUTOSTART", "true") == "true",
 		NgrokPath:           env("NGROK_PATH", "ngrok"),
 		SecretKey:           env("POWERPOSTER_SECRET_KEY", ""),
+		LegalOperator:       env("PP_LEGAL_OPERATOR", ""),
+		LegalContact:        env("PP_LEGAL_CONTACT", ""),
 		InstagramAppID:      env("INSTAGRAM_APP_ID", ""),
 		InstagramAppSecret:  env("INSTAGRAM_APP_SECRET", ""),
 		InstagramAPIVersion: env("INSTAGRAM_API_VERSION", "v23.0"),
