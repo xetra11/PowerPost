@@ -113,22 +113,23 @@ func (s *Store) DeletePost(ctx context.Context, id int64) error {
 // ---- Assets ----
 
 type Asset struct {
-	ID           int64      `json:"id"`
-	PostID       int64      `json:"postId"`
-	Path         string     `json:"-"`
-	OriginalName string     `json:"originalName"`
-	ThumbPath    string     `json:"-"`
-	Info         media.Info `json:"info"`
-	Position     int        `json:"position"` // order within an image post
-	CreatedAt    time.Time  `json:"createdAt"`
+	ID           int64                  `json:"id"`
+	PostID       int64                  `json:"postId"`
+	Path         string                 `json:"-"`
+	OriginalName string                 `json:"originalName"`
+	ThumbPath    string                 `json:"-"`
+	Info         media.Info             `json:"info"`
+	Position     int                    `json:"position"` // order within an image post
+	Framing      map[string]media.Frame `json:"framing"`  // hand-made framing per platform
+	CreatedAt    time.Time              `json:"createdAt"`
 }
 
-const assetCols = `id, post_id, path, original_name, thumb_path, info, position, created_at`
+const assetCols = `id, post_id, path, original_name, thumb_path, info, position, framing, created_at`
 
 func scanAsset(row interface{ Scan(...any) error }) (Asset, error) {
 	var a Asset
-	var info, created string
-	err := row.Scan(&a.ID, &a.PostID, &a.Path, &a.OriginalName, &a.ThumbPath, &info, &a.Position, &created)
+	var info, framing, created string
+	err := row.Scan(&a.ID, &a.PostID, &a.Path, &a.OriginalName, &a.ThumbPath, &info, &a.Position, &framing, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -136,14 +137,16 @@ func scanAsset(row interface{ Scan(...any) error }) (Asset, error) {
 		return a, err
 	}
 	_ = json.Unmarshal([]byte(info), &a.Info)
+	a.Framing = map[string]media.Frame{}
+	_ = json.Unmarshal([]byte(framing), &a.Framing)
 	a.CreatedAt = parseTime(created)
 	return a, nil
 }
 
 func (s *Store) CreateAsset(ctx context.Context, a *Asset) error {
 	ts := now()
-	res, err := s.db.ExecContext(ctx, `INSERT INTO assets (post_id, path, original_name, thumb_path, info, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		a.PostID, a.Path, a.OriginalName, a.ThumbPath, mustJSON(a.Info), a.Position, ts)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO assets (post_id, path, original_name, thumb_path, info, position, framing, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.PostID, a.Path, a.OriginalName, a.ThumbPath, mustJSON(a.Info), a.Position, mustJSON(framingOrEmpty(a.Framing)), ts)
 	if err != nil {
 		return err
 	}
@@ -177,6 +180,19 @@ func (s *Store) GetAsset(ctx context.Context, id int64) (Asset, error) {
 func (s *Store) SetAssetPosition(ctx context.Context, id int64, position int) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE assets SET position = ? WHERE id = ?`, position, id)
 	return err
+}
+
+// SetAssetFraming replaces the hand-made framings of an asset.
+func (s *Store) SetAssetFraming(ctx context.Context, id int64, framing map[string]media.Frame) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE assets SET framing = ? WHERE id = ?`, mustJSON(framingOrEmpty(framing)), id)
+	return err
+}
+
+func framingOrEmpty(f map[string]media.Frame) map[string]media.Frame {
+	if f == nil {
+		return map[string]media.Frame{}
+	}
+	return f
 }
 
 func (s *Store) DeleteAsset(ctx context.Context, id int64) error {

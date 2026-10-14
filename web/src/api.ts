@@ -36,7 +36,7 @@ export interface Rendition {
   status: 'pending' | 'processing' | 'ready' | 'failed'
   progress: number
   info: MediaInfo | null
-  plan: { fixes: string[]; format?: string }
+  plan: { fixes: string[]; format?: string; width: number; height: number; place?: object }
   error: string
   url: string
 }
@@ -88,8 +88,17 @@ export interface Asset {
   originalName: string
   info: MediaInfo
   position: number
+  framing: Record<string, Frame> // hand-made framing per platform
   url: string
   thumbUrl: string
+}
+
+/** Hand-made placement of a media file on a platform's canvas (see internal/media/frame.go). */
+export interface Frame {
+  aspect?: number // images: canvas width / height; 0 or missing = automatic
+  scale: number // 1 = the whole media just fits the canvas
+  x: number // center of the media, in canvas widths
+  y: number // center of the media, in canvas heights
 }
 
 export interface ProjectRef {
@@ -147,7 +156,9 @@ export interface Platform {
   missingSettings: string[]
   canImportToken: boolean
   tokenPrompt: { label: string; help: string; only: boolean } | null
-  constraints: { caption: { maxChars: number; countUtf16: boolean } }
+  supportedKinds: PostKind[]
+  constraints: { caption: { maxChars: number; countUtf16: boolean }; video?: { targetWidth: number; targetHeight: number } } // for video posts
+  imageConstraints: { aspectMin?: number; aspectMax?: number; sameAspect?: boolean; maxWidth: number; maxHeight: number } | null
   optionsSchema: { properties: Record<string, SchemaProp> }
 }
 
@@ -225,6 +236,8 @@ export const api = {
   clearCover: (id: number) => request<Post>('DELETE', `/api/posts/${id}/cover`),
   removeMedia: (id: number, assetId: number) => request<Post>('DELETE', `/api/posts/${id}/media/${assetId}`),
   reorderMedia: (id: number, ids: number[]) => request<Post>('PUT', `/api/posts/${id}/media/order`, { ids }),
+  setFraming: (id: number, assetId: number, platforms: string[], frame: Frame | null) =>
+    request<Post>('PUT', `/api/posts/${id}/media/${assetId}/framing`, { platforms, frame }),
   attempts: (id: number) => request<Attempt[]>('GET', `/api/posts/${id}/attempts`),
   platforms: (projectId: number) => request<Platform[]>('GET', `/api/projects/${projectId}/platforms`),
   accountInfo: (projectId: number, platform: string) =>

@@ -18,7 +18,7 @@ func png(w, h int, size int64) Info {
 }
 
 func TestImagePlanDownscalesAndConverts(t *testing.T) {
-	p := NewImagePlan(png(1920, 1080, 2<<20), feed, StrategyBlur, 0)
+	p := NewImagePlan(png(1920, 1080, 2<<20), feed, StrategyBlur, 0, nil)
 	if p.VideoCopy || p.Fill || p.Width != 1080 || p.Height != 608 || p.Format != "jpeg" || p.Ext() != ".jpg" {
 		t.Fatalf("unexpected plan %+v", p)
 	}
@@ -29,7 +29,7 @@ func TestImagePlanDownscalesAndConverts(t *testing.T) {
 
 func TestImagePlanFillsOutsideAspectRange(t *testing.T) {
 	// 9:16 is taller than Instagram's 4:5 minimum.
-	p := NewImagePlan(png(1080, 1920, 1<<20), feed, StrategyPad, 0)
+	p := NewImagePlan(png(1080, 1920, 1<<20), feed, StrategyPad, 0, nil)
 	if !p.Fill || p.Strategy != StrategyPad || p.Width != 1080 || p.Height != 1350 {
 		t.Fatalf("unexpected plan %+v", p)
 	}
@@ -42,22 +42,22 @@ func TestImagePlanFillsOutsideAspectRange(t *testing.T) {
 func TestImagePlanCarouselUsesFirstAspect(t *testing.T) {
 	first := png(1920, 1080, 1<<20)
 	aspect := feed.CanvasAspect(first)
-	p := NewImagePlan(png(1000, 1000, 1<<20), feed, StrategyCrop, aspect)
+	p := NewImagePlan(png(1000, 1000, 1<<20), feed, StrategyCrop, aspect, nil)
 	if !p.Fill || p.Width != 1080 || p.Height != 608 {
 		t.Fatalf("unexpected plan %+v", p)
 	}
 }
 
 func TestImagePlanKeepsAcceptedFiles(t *testing.T) {
-	if p := NewImagePlan(png(1920, 1080, 2<<20), gallery, StrategyBlur, 0); !p.VideoCopy || p.Format != "png" || len(p.Fixes) != 0 {
+	if p := NewImagePlan(png(1920, 1080, 2<<20), gallery, StrategyBlur, 0, nil); !p.VideoCopy || p.Format != "png" || len(p.Fixes) != 0 {
 		t.Fatalf("PNG for Discord should be kept: %+v", p)
 	}
 	// Too large for the upload limit: re-encoded as JPEG, even though PNG is accepted.
-	if p := NewImagePlan(png(1920, 1080, 12<<20), gallery, StrategyBlur, 0); p.VideoCopy || p.Format != "jpeg" {
+	if p := NewImagePlan(png(1920, 1080, 12<<20), gallery, StrategyBlur, 0, nil); p.VideoCopy || p.Format != "jpeg" {
 		t.Fatalf("oversized PNG should become JPEG: %+v", p)
 	}
 	// Resized PNG stays PNG where accepted.
-	if p := NewImagePlan(png(6000, 3000, 5<<20), gallery, StrategyBlur, 0); p.VideoCopy || p.Format != "png" || p.Width != 4096 || p.Height != 2048 {
+	if p := NewImagePlan(png(6000, 3000, 5<<20), gallery, StrategyBlur, 0, nil); p.VideoCopy || p.Format != "png" || p.Width != 4096 || p.Height != 2048 {
 		t.Fatalf("resized PNG: %+v", p)
 	}
 }
@@ -111,7 +111,7 @@ func TestConvertImageRealFile(t *testing.T) {
 		t.Fatalf("probe: %v %+v", err, info)
 	}
 	for _, s := range []Strategy{StrategyBlur, StrategyCrop, StrategyPad} {
-		plan := NewImagePlan(info, feed, s, 0)
+		plan := NewImagePlan(info, feed, s, 0, nil)
 		out := filepath.Join(dir, "out-"+string(s)+plan.Ext())
 		if err := r.ConvertImage(ctx, src, out, plan); err != nil {
 			t.Fatal(err)
@@ -128,7 +128,7 @@ func TestConvertImageRealFile(t *testing.T) {
 		}
 	}
 	// Unchanged images are copied as they are.
-	keep := NewImagePlan(info, gallery, StrategyBlur, 0)
+	keep := NewImagePlan(info, gallery, StrategyBlur, 0, nil)
 	out := filepath.Join(dir, "copy"+keep.Ext())
 	if err := r.ConvertImage(ctx, src, out, keep); err != nil {
 		t.Fatal(err)

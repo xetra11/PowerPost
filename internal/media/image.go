@@ -39,7 +39,11 @@ func ImageFormat(i Info) string {
 // CanvasAspect is the aspect ratio an image is fitted to: its own, clamped to
 // the platform's range. For SameAspect platforms pass the post's first image.
 func (c ImageConstraints) CanvasAspect(first Info) float64 {
-	a := first.Aspect()
+	return c.ClampAspect(first.Aspect())
+}
+
+// ClampAspect limits an aspect ratio to the platform's range.
+func (c ImageConstraints) ClampAspect(a float64) float64 {
 	if c.AspectMin > 0 && a < c.AspectMin {
 		a = c.AspectMin
 	}
@@ -50,8 +54,9 @@ func (c ImageConstraints) CanvasAspect(first Info) float64 {
 }
 
 // NewImagePlan fits a still image into constraints. aspect is the canvas
-// aspect ratio (see CanvasAspect); 0 uses the image's own, clamped.
-func NewImagePlan(src Info, c ImageConstraints, s Strategy, aspect float64) Plan {
+// aspect ratio (see CanvasAspect); 0 uses the image's own, clamped. A non-nil
+// frame places the image on the canvas by hand instead of the automatic fit.
+func NewImagePlan(src Info, c ImageConstraints, s Strategy, aspect float64, frame *Frame) Plan {
 	if !s.Valid() {
 		s = StrategyBlur
 	}
@@ -61,7 +66,11 @@ func NewImagePlan(src Info, c ImageConstraints, s Strategy, aspect float64) Plan
 	in := ImageFormat(src)
 	p := Plan{Image: true, VideoCopy: true, Format: in, Width: src.Width, Height: src.Height, Fixes: []string{}}
 
-	if math.Abs(src.Aspect()-aspect)/aspect >= 0.01 {
+	if frame != nil {
+		p.VideoCopy = false
+		p.Width, p.Height = fitBox(aspect, c.MaxWidth, c.MaxHeight)
+		p.frame(src, s, *frame)
+	} else if math.Abs(src.Aspect()-aspect)/aspect >= 0.01 {
 		p.VideoCopy = false
 		p.Fill, p.Strategy = true, s
 		p.Width, p.Height = fitBox(aspect, c.MaxWidth, c.MaxHeight)

@@ -94,7 +94,7 @@ func (a *App) DuplicatePost(ctx context.Context, id int64) (PostView, error) {
 // copyAsset copies the video, thumbnail and ready renditions to a new post.
 func (a *App) copyAsset(ctx context.Context, as store.Asset, postID int64) error {
 	ext := filepath.Ext(as.Path)
-	dst := store.Asset{PostID: postID, OriginalName: as.OriginalName, Info: as.Info, Position: as.Position,
+	dst := store.Asset{PostID: postID, OriginalName: as.OriginalName, Info: as.Info, Position: as.Position, Framing: as.Framing,
 		Path: filepath.Join(a.originalsDir(), fmt.Sprintf("%d-%s%s", postID, randomHex(6), ext))}
 	if err := copyFile(as.Path, dst.Path); err != nil {
 		return err

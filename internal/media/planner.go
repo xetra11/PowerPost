@@ -34,18 +34,20 @@ func (s Strategy) label() string {
 
 // Plan is the minimal set of operations that makes a file fit a platform.
 type Plan struct {
-	Image       bool     `json:"image,omitempty"`  // still image (see NewImagePlan), not a video
-	Format      string   `json:"format,omitempty"` // images: output format, jpeg | png
-	VideoCopy   bool     `json:"videoCopy"`        // true: no re-encode (video: just remux; image: file used as is)
-	Width       int      `json:"width"`
-	Height      int      `json:"height"`
-	Fill        bool     `json:"fill"` // aspect differs: apply Strategy
-	Strategy    Strategy `json:"strategy,omitempty"`
-	FPS         float64  `json:"fps,omitempty"` // 0 = keep source rate
-	Audio       string   `json:"audio"`         // copy | aac | none
-	Encoder     string   `json:"encoder,omitempty"`
-	MaxrateKbps int      `json:"maxrateKbps,omitempty"`
-	Fixes       []string `json:"fixes"` // human-readable list of what changes
+	Image     bool     `json:"image,omitempty"`  // still image (see NewImagePlan), not a video
+	Format    string   `json:"format,omitempty"` // images: output format, jpeg | png
+	VideoCopy bool     `json:"videoCopy"`        // true: no re-encode (video: just remux; image: file used as is)
+	Width     int      `json:"width"`
+	Height    int      `json:"height"`
+	Fill      bool     `json:"fill"` // aspect differs: apply Strategy
+	Strategy  Strategy `json:"strategy,omitempty"`
+	// Place is a hand-made framing (see Frame); Strategy then only fills the background.
+	Place       *Placement `json:"place,omitempty"`
+	FPS         float64    `json:"fps,omitempty"` // 0 = keep source rate
+	Audio       string     `json:"audio"`         // copy | aac | none
+	Encoder     string     `json:"encoder,omitempty"`
+	MaxrateKbps int        `json:"maxrateKbps,omitempty"`
+	Fixes       []string   `json:"fixes"` // human-readable list of what changes
 }
 
 // Hash identifies the output (operations only, not the descriptions).
@@ -59,8 +61,9 @@ func (p Plan) Hash() string {
 
 const defaultMaxrateKbps = 10000
 
-// NewPlan compares a source file against constraints.
-func NewPlan(src Info, c VideoConstraints, s Strategy, encoder string) Plan {
+// NewPlan compares a source file against constraints. A non-nil frame places
+// the video on the canvas by hand instead of the automatic fit.
+func NewPlan(src Info, c VideoConstraints, s Strategy, encoder string, frame *Frame) Plan {
 	if !s.Valid() {
 		s = StrategyBlur
 	}
@@ -70,7 +73,11 @@ func NewPlan(src Info, c VideoConstraints, s Strategy, encoder string) Plan {
 	aspectMatch := math.Abs(src.Aspect()-targetAspect)/targetAspect < 0.01
 	sizeOK := aspectMatch && src.Width <= c.TargetWidth && src.Height <= c.TargetHeight
 
-	if !sizeOK {
+	if frame != nil {
+		p.VideoCopy = false
+		p.Width, p.Height = c.TargetWidth, c.TargetHeight
+		p.frame(src, s, *frame)
+	} else if !sizeOK {
 		p.VideoCopy = false
 		p.Width, p.Height = c.TargetWidth, c.TargetHeight
 		if aspectMatch {
@@ -180,6 +187,16 @@ func (p Plan) Args(in, out string) []string {
 func (p Plan) fitGraph() string {
 	w, h := p.Width, p.Height
 	switch {
+	case p.Place != nil:
+		bg := "boxblur=20:2"
+		if p.Strategy != StrategyBlur {
+			bg = "drawbox=c=black:t=fill"
+		}
+		pl := p.Place
+		return fmt.Sprintf("[0:v]split=2[bgsrc][fgsrc];"+
+			"[bgsrc]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,%s[bg];"+
+			"[fgsrc]crop=%d:%d:%d:%d,scale=%d:%d[fg];"+
+			"[bg][fg]overlay=%d:%d", w, h, w, h, bg, pl.CropW, pl.CropH, pl.CropX, pl.CropY, pl.W, pl.H, pl.X, pl.Y)
 	case p.Fill && p.Strategy == StrategyCrop:
 		return fmt.Sprintf("[0:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d", w, h, w, h)
 	case p.Fill && p.Strategy == StrategyPad:
@@ -192,6 +209,17 @@ func (p Plan) fitGraph() string {
 	default:
 		return fmt.Sprintf("[0:v]scale=%d:%d", w&^1, h&^1)
 	}
+}
+
+// frame places the source by hand on the plan's canvas (Width x Height must be set).
+func (p *Plan) frame(src Info, s Strategy, f Frame) {
+	pl := f.place(src.Width, src.Height, p.Width, p.Height)
+	p.Fill, p.Strategy, p.Place = true, s, &pl
+	bg := "blurred background"
+	if s != StrategyBlur {
+		bg = "black background"
+	}
+	p.Fixes = append(p.Fixes, fmt.Sprintf("Framed %dx%d → %dx%d (%s, %s)", src.Width, src.Height, p.Width, p.Height, f.label(), bg))
 }
 
 func encoderArgs(encoder string, maxrate int) []string {

@@ -18,7 +18,7 @@ func compliant() Info {
 }
 
 func TestPlanCompliantFileIsOnlyRemuxed(t *testing.T) {
-	p := NewPlan(compliant(), reels, StrategyBlur, "libx264")
+	p := NewPlan(compliant(), reels, StrategyBlur, "libx264", nil)
 	if !p.VideoCopy || p.Audio != "copy" || len(p.Fixes) != 0 {
 		t.Fatalf("expected copy without fixes, got %+v", p)
 	}
@@ -31,7 +31,7 @@ func TestPlanCompliantFileIsOnlyRemuxed(t *testing.T) {
 func TestPlan4KLandscapeGameplay(t *testing.T) {
 	src := compliant()
 	src.Width, src.Height, src.FPS, src.Bitrate = 3840, 2160, 120, 80_000_000
-	p := NewPlan(src, reels, StrategyBlur, "libx264")
+	p := NewPlan(src, reels, StrategyBlur, "libx264", nil)
 	if p.VideoCopy || !p.Fill || p.Width != 1080 || p.Height != 1920 || p.FPS != 60 {
 		t.Fatalf("unexpected plan %+v", p)
 	}
@@ -50,7 +50,7 @@ func TestPlanStrategies(t *testing.T) {
 	src := compliant()
 	src.Width, src.Height = 1920, 1080
 	for s, want := range map[Strategy]string{StrategyCrop: "crop=1080:1920", StrategyPad: "pad=1080:1920", StrategyBlur: "boxblur"} {
-		args := strings.Join(NewPlan(src, reels, s, "libx264").Args("i", "o"), " ")
+		args := strings.Join(NewPlan(src, reels, s, "libx264", nil).Args("i", "o"), " ")
 		if !strings.Contains(args, want) {
 			t.Errorf("%s: args missing %q", s, want)
 		}
@@ -60,7 +60,7 @@ func TestPlanStrategies(t *testing.T) {
 func TestPlanVerticalTooLargeIsDownscaledWithoutFill(t *testing.T) {
 	src := compliant()
 	src.Width, src.Height = 2160, 3840
-	p := NewPlan(src, reels, StrategyBlur, "h264_nvenc")
+	p := NewPlan(src, reels, StrategyBlur, "h264_nvenc", nil)
 	if p.Fill || p.Width != 1080 || p.Height != 1920 {
 		t.Fatalf("unexpected plan %+v", p)
 	}
@@ -76,7 +76,7 @@ func TestPlanCodecAndAudioFixes(t *testing.T) {
 	src := compliant()
 	src.Container, src.VideoCodec, src.PixFmt = "matroska,webm", "vp9", "yuv420p10le"
 	src.AudioCodec, src.AudioSampleRate = "opus", 48000
-	p := NewPlan(src, reels, StrategyBlur, "libx264")
+	p := NewPlan(src, reels, StrategyBlur, "libx264", nil)
 	if p.VideoCopy || p.Audio != "aac" || len(p.Fixes) != 3 {
 		t.Fatalf("unexpected plan %+v", p)
 	}
@@ -85,14 +85,14 @@ func TestPlanCodecAndAudioFixes(t *testing.T) {
 func TestPlanNoAudio(t *testing.T) {
 	src := compliant()
 	src.HasAudio, src.AudioCodec = false, ""
-	p := NewPlan(src, reels, StrategyBlur, "libx264")
+	p := NewPlan(src, reels, StrategyBlur, "libx264", nil)
 	if p.Audio != "none" || !slices.Contains(p.Args("i", "o"), "-an") {
 		t.Fatalf("expected no audio, got %+v", p)
 	}
 }
 
 func TestHashIgnoresDescriptions(t *testing.T) {
-	a := NewPlan(compliant(), reels, StrategyBlur, "libx264")
+	a := NewPlan(compliant(), reels, StrategyBlur, "libx264", nil)
 	b := a
 	b.Fixes = []string{"something else"}
 	if a.Hash() != b.Hash() {
@@ -145,7 +145,7 @@ func TestPlanSmallSizeLimitCapsBitrate(t *testing.T) {
 	discord := reels
 	discord.MaxBytes = 10 << 20
 	src := compliant() // 20 s, 20 MB
-	p := NewPlan(src, discord, StrategyBlur, "libx264")
+	p := NewPlan(src, discord, StrategyBlur, "libx264", nil)
 	// 10 MiB * 8 * 0.9 / 20 s = 3774 kbps, minus 160 kbps audio.
 	if p.VideoCopy || p.MaxrateKbps != 3614 {
 		t.Fatalf("unexpected plan %+v", p)
@@ -156,7 +156,7 @@ func TestPlanSmallSizeLimitCapsBitrate(t *testing.T) {
 
 	// A large limit leaves the default cap alone (Instagram/TikTok plans are unchanged).
 	src.Width, src.Height = 1920, 1080
-	if p := NewPlan(src, reels, StrategyBlur, "libx264"); p.MaxrateKbps != defaultMaxrateKbps {
+	if p := NewPlan(src, reels, StrategyBlur, "libx264", nil); p.MaxrateKbps != defaultMaxrateKbps {
 		t.Errorf("maxrate %d, want %d", p.MaxrateKbps, defaultMaxrateKbps)
 	}
 }

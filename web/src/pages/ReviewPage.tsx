@@ -5,6 +5,7 @@ import { CopyButton, ErrorBanner, IssueList, StatusBadge } from '../components/c
 import { PhonePreview, type PreviewMode } from '../components/PhonePreview'
 import { usePolling } from '../usePolling'
 import { useFollowProject } from '../project'
+import { surfaceNote, surfaceOf } from '../safeZones'
 
 const busy = (p: Post | null) =>
   !!p &&
@@ -281,7 +282,11 @@ function ReviewCard({
       <PhonePreview
         platform={t.platform}
         videoUrl={!images && r?.status === 'ready' ? r.url : null}
-        images={images && imagesReady ? t.renditions.map((x) => x.url) : null}
+        images={
+          images && imagesReady
+            ? t.renditions.map((x) => ({ url: x.url, width: x.info?.width ?? x.plan.width, height: x.info?.height ?? x.plan.height }))
+            : null
+        }
         placeholder={
           t.renditions.some((x) => x.status === 'failed')
             ? 'Conversion failed'
@@ -299,6 +304,7 @@ function ReviewCard({
         mode={mode === 'live' ? 'simulation' : mode}
       />
       )}
+      {mode === 'safezones' && <small className="muted">{surfaceNote[surfaceOf(t.platform, post.kind)]}</small>}
       {images
         ? imagesReady && <small className="muted">{describeImages(t.renditions.flatMap((x) => (x.info ? [x.info] : [])))}</small>
         : r?.info && <small className="muted">{describeMedia(r.info)}</small>}

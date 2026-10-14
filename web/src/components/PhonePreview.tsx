@@ -1,11 +1,18 @@
 import { useRef, useState, type ReactNode } from 'react'
+import { isScreen, safeZones, surfaceOf, type Zone } from '../safeZones'
 
 export type PreviewMode = 'live' | 'simulation' | 'safezones' | 'plain'
+
+export interface PreviewImage {
+  url: string
+  width: number
+  height: number
+}
 
 export interface PreviewProps {
   platform: string // instagram | tiktok | other
   videoUrl: string | null // null while converting
-  images?: string[] | null // image posts: the converted images, null while converting
+  images?: PreviewImage[] | null // image posts: the converted images, null while converting
   placeholder: string
   caption: string
   username: string // without @
@@ -15,9 +22,9 @@ export interface PreviewProps {
 
 /**
  * A phone-sized preview of the converted video (or images, as a swipeable carousel). In "simulation" mode it draws an
- * approximation of the Instagram Reels / TikTok feed UI on top, so you can see
- * what the caption, username and buttons cover. Not pixel-exact: both apps
- * change their layout regularly.
+ * approximation of the app around it: the Reels / TikTok feed UI on top of
+ * videos and TikTok photos, the Instagram feed around image posts. Not
+ * pixel-exact: the apps change their layout regularly.
  */
 export function PhonePreview(p: PreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -26,11 +33,17 @@ export function PhonePreview(p: PreviewProps) {
   const simulate = p.mode === 'simulation' && (p.platform === 'instagram' || p.platform === 'tiktok')
 
   if (p.images) {
+    const surface = surfaceOf(p.platform, 'image')
+    if (simulate && surface === 'feed') return <InstagramFeed {...p} images={p.images} />
+    const carousel = p.images.length > 1
     return (
       <div className={simulate ? `phone sim sim-${p.platform}` : 'phone'}>
-        <ImageCarousel urls={p.images} />
-        {p.mode === 'safezones' && <SafeZones />}
-        {simulate && (p.platform === 'instagram' ? <InstagramOverlay {...p} /> : <TikTokOverlay {...p} />)}
+        <ImageCarousel
+          images={p.images}
+          zones={p.mode === 'safezones' && surface === 'feed' ? (aspect) => safeZones('feed', { aspect, carousel }) : undefined}
+        />
+        {p.mode === 'safezones' && isScreen(surface) && <SafeZoneOverlay zones={safeZones(surface)} />}
+        {simulate && <TikTokOverlay {...p} />}
       </div>
     )
   }
@@ -47,7 +60,7 @@ export function PhonePreview(p: PreviewProps) {
     return (
       <div className="phone">
         <video src={p.videoUrl} controls playsInline preload="metadata" />
-        {p.mode === 'safezones' && <SafeZones />}
+        {p.mode === 'safezones' && <SafeZoneOverlay zones={safeZones(surfaceOf(p.platform, 'video'))} />}
       </div>
     )
   }
@@ -85,11 +98,11 @@ export function PhonePreview(p: PreviewProps) {
   )
 }
 
-function InstagramOverlay({ caption, username, label, images }: PreviewProps) {
+function InstagramOverlay({ caption, username, label }: PreviewProps) {
   return (
     <div className="sim-overlay" aria-hidden>
       <div className="sim-top ig-top">
-        <strong>{images ? 'Posts' : 'Reels'}</strong>
+        <strong>Reels</strong>
         <Icon name="camera" />
       </div>
       <div className="sim-rail">
@@ -153,8 +166,81 @@ function TikTokOverlay({ caption, username, label }: PreviewProps) {
   )
 }
 
+/**
+ * An Instagram feed post: header above the image, buttons and caption below.
+ * Nothing covers the image itself; carousels show dots under it.
+ */
+function InstagramFeed(p: PreviewProps & { images: PreviewImage[] }) {
+  const [index, setIndex] = useState(0)
+  const name = p.username || 'your_account'
+  const first = p.images[0]
+  return (
+    <div className="phone sim sim-feed">
+      <div className="feed">
+        <div className="feed-top" aria-hidden>
+          <strong className="feed-logo">Instagram</strong>
+          <span>
+            <Icon name="heart" />
+            <Icon name="send" />
+          </span>
+        </div>
+        <div className="feed-head" aria-hidden>
+          <span className="avatar" />
+          <strong>{name}</strong>
+          <Icon name="dots" />
+        </div>
+        <div className="feed-media" style={{ aspectRatio: `${first.width} / ${first.height}` }}>
+          <ImageCarousel images={p.images} index={index} onIndex={setIndex} dots={false} />
+        </div>
+        <div className="feed-actions" aria-hidden>
+          <Icon name="heart" />
+          <Icon name="comment" />
+          <Icon name="send" />
+          {p.images.length > 1 && (
+            <span className="feed-dots">
+              {p.images.map((img, n) => (
+                <span key={img.url} className={n === index ? 'active' : ''} />
+              ))}
+            </span>
+          )}
+          <span className="feed-save">
+            <Icon name="bookmark" />
+          </span>
+        </div>
+        <div className="feed-likes">1.204 likes</div>
+        <Caption text={p.caption} prefix={name} />
+        <div className="feed-comments">View all 48 comments</div>
+      </div>
+      <div className="feed-nav" aria-hidden>
+        <Icon name="home" />
+        <Icon name="search" />
+        <Icon name="plus" />
+        <Icon name="reels" />
+        <span className="avatar" />
+      </div>
+    </div>
+  )
+}
+
+/** Covered areas of the screen (or image), labelled. */
+export function SafeZoneOverlay({ zones }: { zones: Zone[] }) {
+  return (
+    <div className="safe-zones" aria-hidden>
+      {zones.map((z, i) => (
+        <div
+          key={i}
+          className={z.width < 20 && z.height > 2 * z.width ? 'vertical' : undefined}
+          style={{ top: `${z.top}%`, left: `${z.left}%`, width: `${z.width}%`, height: `${z.height}%` }}
+        >
+          {z.label && <span>{z.label}</span>}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** Caption clamped to two lines with "… more", like both apps; hashtags in bold. */
-function Caption({ text }: { text: string }) {
+function Caption({ text, prefix }: { text: string; prefix?: string }) {
   const [open, setOpen] = useState(false)
   if (!text.trim()) return null
   const parts: ReactNode[] = text.split(/(#[\p{L}\p{N}_]+|@[\p{L}\p{N}_.]+)/u).map((s, i) =>
@@ -162,7 +248,10 @@ function Caption({ text }: { text: string }) {
   )
   return (
     <div className={`sim-caption ${open ? 'open' : ''}`} onClick={() => setOpen(!open)} title={open ? 'Collapse' : 'Show full caption'}>
-      <span className="text">{parts}</span>
+      <span className="text">
+        {prefix && <strong>{prefix} </strong>}
+        {parts}
+      </span>
       {!open && <span className="more">… more</span>}
     </div>
   )
@@ -177,17 +266,22 @@ function RailItem({ icon, text }: { icon: IconName; text: string }) {
   )
 }
 
-function SafeZones() {
-  return (
-    <div className="safe-zones" aria-hidden>
-      <div className="sz-top" />
-      <div className="sz-bottom" />
-      <div className="sz-right" />
-    </div>
-  )
-}
-
-type IconName = 'heart' | 'comment' | 'send' | 'share' | 'bookmark' | 'dots' | 'music' | 'camera' | 'search' | 'play' | 'muted' | 'sound'
+type IconName =
+  | 'heart'
+  | 'comment'
+  | 'send'
+  | 'share'
+  | 'bookmark'
+  | 'dots'
+  | 'music'
+  | 'camera'
+  | 'search'
+  | 'play'
+  | 'muted'
+  | 'sound'
+  | 'home'
+  | 'plus'
+  | 'reels'
 
 /** Generic line icons (not the platforms' own artwork). */
 function Icon({ name }: { name: IconName }) {
@@ -210,6 +304,9 @@ function Icon({ name }: { name: IconName }) {
     play: <path d="M8 5l12 7-12 7V5z" />,
     muted: <path d="M4 9h4l5-4v14l-5-4H4V9zm12 0l5 6m0-6l-5 6" />,
     sound: <path d="M4 9h4l5-4v14l-5-4H4V9zm12-1a5 5 0 0 1 0 8m2-11a9 9 0 0 1 0 14" />,
+    home: <path d="M4 11l8-7 8 7v9h-5v-6H9v6H4v-9z" />,
+    plus: <path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm7 4v8m-4-4h8" />,
+    reels: <path d="M4 4h16v16H4V4zm0 5h16M9 4l2 5m3-5l2 5m-6 3v5l4-2.5-4-2.5z" />,
   }
   const filled = name === 'play' || name === 'dots'
   return (
@@ -219,13 +316,38 @@ function Icon({ name }: { name: IconName }) {
   )
 }
 
-/** Shows one image at a time with arrows and dots, like a carousel post. */
-function ImageCarousel({ urls }: { urls: string[] }) {
-  const [index, setIndex] = useState(0)
+/**
+ * Shows one image at a time with arrows and dots, like a carousel post. The
+ * image is fitted into the available space; zones (in percent of the image)
+ * are drawn on top of it.
+ */
+function ImageCarousel({
+  images,
+  index: controlled,
+  onIndex,
+  dots = true,
+  zones,
+}: {
+  images: PreviewImage[]
+  index?: number
+  onIndex?: (i: number) => void
+  dots?: boolean
+  zones?: (aspect: number) => Zone[]
+}) {
+  const [own, setOwn] = useState(0)
+  const index = controlled ?? own
+  const setIndex = onIndex ?? setOwn
+  const urls = images.map((x) => x.url)
   const i = Math.min(index, urls.length - 1)
+  const aspect = images[i].width / images[i].height || 1
   return (
     <div className="carousel">
-      <img src={urls[i]} alt={`Image ${i + 1} of ${urls.length}`} />
+      <div className="media-fit">
+        <div className="media-box" style={{ aspectRatio: `${aspect}`, ...(aspect >= 9 / 16 ? { width: '100%' } : { height: '100%' }) }}>
+          <img src={urls[i]} alt={`Image ${i + 1} of ${urls.length}`} />
+          {zones && <SafeZoneOverlay zones={zones(aspect)} />}
+        </div>
+      </div>
       {urls.length > 1 && (
         <>
           <button type="button" className="carousel-nav prev" disabled={i === 0} onClick={() => setIndex(i - 1)} aria-label="Previous image">
@@ -237,11 +359,13 @@ function ImageCarousel({ urls }: { urls: string[] }) {
           <span className="carousel-count">
             {i + 1}/{urls.length}
           </span>
-          <span className="carousel-dots" aria-hidden>
-            {urls.map((u, n) => (
-              <span key={u} className={n === i ? 'active' : ''} />
-            ))}
-          </span>
+          {dots && (
+            <span className="carousel-dots" aria-hidden>
+              {urls.map((u, n) => (
+                <span key={u} className={n === i ? 'active' : ''} />
+              ))}
+            </span>
+          )}
         </>
       )}
     </div>

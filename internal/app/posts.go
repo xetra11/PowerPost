@@ -430,6 +430,42 @@ func (a *App) ReorderMedia(ctx context.Context, postID int64, ids []int64) (Post
 	return a.afterEdit(ctx, postID)
 }
 
+// SetFraming places one media file by hand on the canvas of the given
+// platforms (zoom, position and, for images, aspect ratio). A nil frame goes
+// back to the automatic fit of the post's strategy.
+func (a *App) SetFraming(ctx context.Context, postID, assetID int64, platforms []string, frame *media.Frame) (PostView, error) {
+	a.postMu.Lock()
+	defer a.postMu.Unlock()
+
+	if _, err := a.editablePost(ctx, postID); err != nil {
+		return PostView{}, err
+	}
+	as, err := a.Store.GetAsset(ctx, assetID)
+	if err != nil || as.PostID != postID {
+		return PostView{}, notFound("media %d not found in post %d", assetID, postID)
+	}
+	if len(platforms) == 0 {
+		return PostView{}, invalid("name at least one platform")
+	}
+	for _, id := range platforms {
+		if _, ok := a.Registry.Get(platform.ID(id)); !ok {
+			return PostView{}, invalid("unknown platform %q (available: %s)", id, strings.Join(a.platformIDs(), ", "))
+		}
+		if frame == nil {
+			delete(as.Framing, id)
+		} else {
+			as.Framing[id] = frame.Normalize()
+		}
+	}
+	if err := a.Store.SetAssetFraming(ctx, as.ID, as.Framing); err != nil {
+		return PostView{}, err
+	}
+	if err := a.ensureRenditions(ctx, postID); err != nil {
+		return PostView{}, err
+	}
+	return a.afterEdit(ctx, postID)
+}
+
 func (a *App) DeletePost(ctx context.Context, id int64) error {
 	a.postMu.Lock()
 	defer a.postMu.Unlock()

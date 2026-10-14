@@ -8,25 +8,27 @@ import (
 	"strings"
 	"time"
 
+	"powerposter/internal/media"
 	"powerposter/internal/platform"
 	"powerposter/internal/store"
 )
 
 type PlatformView struct {
-	ID              string                `json:"id"`
-	DisplayName     string                `json:"displayName"`
-	Configured      bool                  `json:"configured"`
-	Connected       bool                  `json:"connected"`
-	AccountName     string                `json:"accountName"`
-	ExpiresAt       *time.Time            `json:"expiresAt"`
-	RedirectURI     string                `json:"redirectUri"`
-	MissingSettings []string              `json:"missingSettings"` // .env entries needed before Connect works
-	CanImportToken  bool                  `json:"canImportToken"`  // a dashboard-generated token can be pasted instead
-	TokenPrompt     *platform.TokenPrompt `json:"tokenPrompt"`     // what to paste (with CanImportToken)
-	SupportedKinds  []platform.PostKind   `json:"supportedKinds"`
-	Constraints     platform.Constraints  `json:"constraints"`
-	OptionsSchema   any                   `json:"optionsSchema"`
-	DefaultOptions  any                   `json:"defaultOptions"`
+	ID              string                  `json:"id"`
+	DisplayName     string                  `json:"displayName"`
+	Configured      bool                    `json:"configured"`
+	Connected       bool                    `json:"connected"`
+	AccountName     string                  `json:"accountName"`
+	ExpiresAt       *time.Time              `json:"expiresAt"`
+	RedirectURI     string                  `json:"redirectUri"`
+	MissingSettings []string                `json:"missingSettings"` // .env entries needed before Connect works
+	CanImportToken  bool                    `json:"canImportToken"`  // a dashboard-generated token can be pasted instead
+	TokenPrompt     *platform.TokenPrompt   `json:"tokenPrompt"`     // what to paste (with CanImportToken)
+	SupportedKinds  []platform.PostKind     `json:"supportedKinds"`
+	Constraints     platform.Constraints    `json:"constraints"`      // for video posts
+	ImageLimits     *media.ImageConstraints `json:"imageConstraints"` // for image posts (nil: not supported)
+	OptionsSchema   any                     `json:"optionsSchema"`
+	DefaultOptions  any                     `json:"defaultOptions"`
 }
 
 func (a *App) Platforms(ctx context.Context, projectID int64) ([]PlatformView, error) {
@@ -45,6 +47,7 @@ func (a *App) Platforms(ctx context.Context, projectID int64) ([]PlatformView, e
 			TokenPrompt:     tokenPrompt(ad),
 			SupportedKinds:  ad.SupportedKinds(),
 			Constraints:     ad.Constraints(platform.KindVideo),
+			ImageLimits:     ad.Constraints(platform.KindImage).Image,
 			OptionsSchema:   ad.OptionsSchema(),
 			DefaultOptions:  ad.DefaultOptions(),
 		}

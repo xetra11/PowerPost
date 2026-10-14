@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"powerposter/internal/app"
+	"powerposter/internal/media"
 	"powerposter/internal/platform"
 	"powerposter/internal/testutil"
 )
@@ -684,5 +685,53 @@ func TestImagePostFlow(t *testing.T) {
 	// A video replaces the images again.
 	if dup, err = a.AttachFile(ctx, dup.ID, video, "", false); err != nil || dup.Kind != "video" || len(dup.Assets) != 1 {
 		t.Fatalf("video after images: %v %s %d", err, dup.Kind, len(dup.Assets))
+	}
+}
+
+func TestFramingPerPlatform(t *testing.T) {
+	ig, tt := &testutil.FakeAdapter{Name: "ig"}, &testutil.FakeAdapter{Name: "tt"}
+	a := testutil.NewApp(t, ig, tt)
+	ctx := context.Background()
+	v, _ := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Title: "Framed", Caption: "Hi"})
+	local, _ := a.ResolveInboxPath(testutil.MakeVideo(t, a, "v.mp4", 640, 360, 30, 1.5))
+	if _, err := a.AttachFile(ctx, v.ID, local, "", false); err != nil {
+		t.Fatal(err)
+	}
+	v = testutil.WaitReady(t, a, v.ID)
+	if v, _ = a.Approve(ctx, v.ID); v.Status != app.StatusApproved {
+		t.Fatalf("approve: %s", v.Status)
+	}
+	assetID := v.Assets[0].ID
+
+	if _, err := a.SetFraming(ctx, v.ID, assetID, []string{"nope"}, &media.Frame{Scale: 2}); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("unknown platform: %v", err)
+	}
+	// Framing one platform re-converts only that one and drops the approval.
+	v, err := a.SetFraming(ctx, v.ID, assetID, []string{"tt"}, &media.Frame{Scale: 1.5, X: 0.5, Y: 0.3})
+	if err != nil || v.Status != app.StatusDraft {
+		t.Fatalf("set framing: %v %s", err, v.Status)
+	}
+	if f := v.Assets[0].Framing["tt"]; f.Scale != 1.5 || len(v.Assets[0].Framing) != 1 {
+		t.Fatalf("framing %+v", v.Assets[0].Framing)
+	}
+	v = testutil.WaitReady(t, a, v.ID)
+	byPlatform := map[string]app.TargetView{}
+	for _, tg := range v.Targets {
+		byPlatform[tg.Platform] = tg
+	}
+	if byPlatform["tt"].Rendition.Plan.Place == nil || byPlatform["ig"].Rendition.Plan.Place != nil {
+		t.Fatalf("plans: tt %+v ig %+v", byPlatform["tt"].Rendition.Plan, byPlatform["ig"].Rendition.Plan)
+	}
+	if byPlatform["tt"].Rendition.Checksum == byPlatform["ig"].Rendition.Checksum {
+		t.Fatal("framed and automatic output should differ")
+	}
+
+	// Duplicates keep the framing; a nil frame resets it.
+	c, err := a.DuplicatePost(ctx, v.ID)
+	if err != nil || c.Assets[0].Framing["tt"].Scale != 1.5 {
+		t.Fatalf("duplicate: %v %+v", err, c.Assets)
+	}
+	if v, err = a.SetFraming(ctx, v.ID, assetID, []string{"tt", "ig"}, nil); err != nil || len(v.Assets[0].Framing) != 0 {
+		t.Fatalf("reset: %v %+v", err, v.Assets[0].Framing)
 	}
 }

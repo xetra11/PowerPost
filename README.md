@@ -127,8 +127,10 @@ The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip thos
 
    Images outside a platform's aspect ratio are fitted with the same choice as videos: blurred background (default), crop, or black bars. The first image is the one shown first, so put the strongest one first.
 
+   **Framing & safe zones.** Below the media, you can place the video (or each image) by hand for every platform: drag it, zoom with the slider or mouse wheel, with that platform's safe zones drawn on top (Reels and TikTok cover different areas, TikTok photos more than videos). Images can also get another format per platform, e.g. 9:16 for a full-screen TikTok photo. "Apply to all platforms" uses the same framing everywhere; "Back to automatic" drops it. Framing re-converts only the affected platform.
+
 3. **Pick a cover** (videos only). Choose a frame of the video (used by Instagram and TikTok), or upload an image. Instagram uses the image (needs the tunnel); TikTok's API only accepts a video frame. Image posts have no separate cover: the first image is it.
-4. **Review.** Phone-sized previews play the converted files (image posts as a swipeable carousel), with an optional safe-zone overlay. You see the final caption for each platform, every automatic fix, and any remaining problems.
+4. **Review.** Phone-sized previews play the converted files (image posts as a swipeable carousel) inside an approximation of each app: Reels and TikTok UI on top of videos and TikTok photos, the Instagram feed around image posts. The safe-zone mode shows each platform's covered areas (for Instagram image posts: the 3:4 crop of the profile grid). You see the final caption for each platform, every automatic fix, and any remaining problems.
 5. **Approve.** This locks in the content. Any change afterwards (caption, options, video, images or their order) sends the post back to draft. The internal title doesn't count.
 6. **Publish** each platform on its own card, or all at once. Uploads run in the background. Each platform shows its progress, the link to the live post, or an error with a **Retry** button. If you delete an Instagram post in the app, the review page notices it (status *Removed*); you can then edit the post and publish it again.
 

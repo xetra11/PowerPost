@@ -105,7 +105,9 @@ ul.plain li { list-style: none; }
   border-radius: 18px; overflow: hidden; border: 6px solid #222; }
 .phone video { width: 100%; height: 100%; object-fit: contain; display: block; }
 .carousel { position: relative; width: 100%; height: 100%; }
-.carousel img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.media-fit { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+.media-box { position: relative; max-width: 100%; max-height: 100%; }
+.media-box img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .carousel-nav { position: absolute; z-index: 2; top: 50%; transform: translateY(-50%); width: 2rem; height: 2rem; padding: 0; margin: 0;
   border: none; border-radius: 50%; background: rgba(255, 255, 255, 0.8); color: #000; font-size: 1.3rem; line-height: 1; }
 .carousel-nav:disabled { display: none; }
@@ -119,10 +121,39 @@ ul.plain li { list-style: none; }
 .carousel-dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.45); }
 .carousel-dots span.active { background: #fff; }
 .phone-placeholder { color: #aaa; display: grid; place-items: center; height: 100%; font-size: 0.9rem; }
-.safe-zones > div { position: absolute; background: rgba(255, 60, 60, 0.28); pointer-events: none; }
-.sz-top { top: 0; left: 0; right: 0; height: 9%; }
-.sz-bottom { bottom: 0; left: 0; right: 0; height: 22%; }
-.sz-right { right: 0; top: 40%; height: 38%; width: 15%; }
+.safe-zones { position: absolute; inset: 0; z-index: 1; pointer-events: none; container-type: inline-size; }
+.safe-zones > div { position: absolute; background: rgba(255, 60, 60, 0.3); outline: 1px dashed rgba(255, 110, 110, 0.9); outline-offset: -1px;
+  display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.safe-zones span { color: #fff; font: 600 clamp(8px, 3.4cqw, 12px) / 1.15 system-ui, sans-serif; text-align: center; padding: 2px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8); }
+.safe-zones .vertical span { writing-mode: vertical-rl; }
+.sim-tiktok .carousel-count { display: none; }
+.sim-tiktok .carousel-nav.next { right: 17%; }
+.sim-tiktok .carousel-dots { bottom: 27%; }
+
+/* Instagram feed post (image posts): UI around the image, not on it */
+.sim-feed { background: #000; }
+.feed { position: absolute; inset: 0 0 8% 0; overflow: hidden; display: flex; flex-direction: column; font-size: 3.9cqw; line-height: 1.3; }
+.feed-top { display: flex; justify-content: space-between; align-items: center; padding: 3cqw 3.5cqw 2cqw; }
+.feed-top > span { display: flex; gap: 4cqw; }
+.feed-logo { font: italic 600 6.5cqw / 1 "Segoe Script", "Brush Script MT", cursive; }
+.feed-head { display: flex; align-items: center; gap: 2.5cqw; padding: 2cqw 3.5cqw; }
+.feed-head .sim-icon { margin-left: auto; width: 6cqw; height: 6cqw; }
+.feed-media { position: relative; width: 100%; flex-shrink: 0; background: #111; }
+.feed-media .carousel-count { top: 3cqw; right: 3cqw; }
+.feed-actions { position: relative; display: flex; align-items: center; gap: 4cqw; padding: 2.5cqw 3.5cqw 1cqw; }
+.feed-actions .sim-icon { width: 7cqw; height: 7cqw; }
+.feed-save { margin-left: auto; }
+.feed-dots { position: absolute; left: 50%; transform: translateX(-50%); display: flex; gap: 1.2cqw; }
+.feed-dots span { width: 1.6cqw; height: 1.6cqw; border-radius: 50%; background: rgba(255, 255, 255, 0.35); }
+.feed-dots span.active { background: #3897f0; }
+.feed-likes { font-weight: 600; padding: 0 3.5cqw; }
+.feed .sim-caption { padding: 0.5cqw 3.5cqw; pointer-events: auto; }
+.feed-comments { padding: 0.5cqw 3.5cqw; opacity: 0.6; }
+.feed-nav { position: absolute; left: 0; right: 0; bottom: 0; height: 8%; display: flex; justify-content: space-around; align-items: center;
+  background: #000; border-top: 1px solid #222; }
+.feed-nav .sim-icon { width: 6.5cqw; height: 6.5cqw; }
+.feed-nav .avatar { width: 6.5cqw; height: 6.5cqw; }
 .review-card > small.muted { display: block; text-align: center; margin-bottom: 1rem; }
 pre.caption { white-space: pre-wrap; word-break: break-word; padding: 0.75rem; font-size: 0.9rem; }
 dl.options { display: grid; grid-template-columns: 1fr; gap: 0.15rem; font-size: 0.85rem; margin: 1rem 0; }
@@ -228,3 +259,24 @@ dl.options dd { margin: 0; text-align: right; }
 .stats-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 1rem; margin: 0 0 0.75rem; font-variant-numeric: tabular-nums; }
 .stats-bar button { margin: 0; width: auto; padding: 0.15rem 0.6rem; }
 .stats-note { flex-basis: 100%; text-align: center; }
+
+/* Framing editor */
+.framing-images { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.framing-images button { position: relative; width: 52px; height: 52px; padding: 0; margin: 0; border: 2px solid transparent; border-radius: 6px;
+  background: none; overflow: hidden; }
+.framing-images button.active { border-color: var(--pico-primary); }
+.framing-images img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.framing-images span { position: absolute; left: 2px; top: 2px; background: rgba(0, 0, 0, 0.7); color: #fff; border-radius: 0.5rem; padding: 0 0.3rem; font-size: 0.7rem; }
+.framing-body { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+@media (max-width: 700px) { .framing-body { grid-template-columns: 1fr; } }
+.framing-stage { width: 100%; max-width: 300px; margin: 0 auto; }
+.framing-stage.plain { display: flex; justify-content: center; }
+.framing-phone { margin: 0; }
+.framing-canvas { position: relative; overflow: hidden; background: #000; max-width: 100%; touch-action: none; user-select: none; }
+.framing-canvas.draggable { cursor: grab; }
+.framing-canvas.draggable:active { cursor: grabbing; }
+.framing-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; filter: blur(10px) brightness(0.85); transform: scale(1.1); pointer-events: none; }
+.framing-media { position: absolute; max-width: none; object-fit: fill; pointer-events: none; display: block; }
+.framing-controls label { margin-bottom: 0.6rem; }
+.framing-controls .actions { margin-bottom: 0.75rem; }
+.framing-controls > small { display: block; margin-bottom: 0.75rem; }

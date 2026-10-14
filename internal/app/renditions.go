@@ -54,22 +54,46 @@ func (a *App) ensureRenditions(ctx context.Context, postID int64) error {
 			if c.Image == nil {
 				continue
 			}
-			aspect := 0.0 // each image keeps its own (clamped) aspect ratio
+			// Each image keeps its own (clamped) aspect ratio unless framed to
+			// another one; on SameAspect platforms the first image sets it for all.
+			shared := 0.0
 			if c.Image.SameAspect {
-				aspect = c.Image.CanvasAspect(assets[0].Info)
+				shared = imageAspect(assets[0], t.Platform, *c.Image)
 			}
 			for _, as := range assets {
-				if err := a.ensureRendition(ctx, as, t.Platform, media.NewImagePlan(as.Info, *c.Image, strategy, aspect)); err != nil {
+				aspect := shared
+				if aspect == 0 {
+					aspect = imageAspect(as, t.Platform, *c.Image)
+				}
+				plan := media.NewImagePlan(as.Info, *c.Image, strategy, aspect, frameOf(as, t.Platform))
+				if err := a.ensureRendition(ctx, as, t.Platform, plan); err != nil {
 					return err
 				}
 			}
 		} else if c.Video != nil {
-			if err := a.ensureRendition(ctx, assets[0], t.Platform, media.NewPlan(assets[0].Info, *c.Video, strategy, a.Cfg.FFmpegEncoder)); err != nil {
+			plan := media.NewPlan(assets[0].Info, *c.Video, strategy, a.Cfg.FFmpegEncoder, frameOf(assets[0], t.Platform))
+			if err := a.ensureRendition(ctx, assets[0], t.Platform, plan); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// frameOf returns the hand-made framing of an asset for a platform, or nil.
+func frameOf(as store.Asset, platformID string) *media.Frame {
+	if f, ok := as.Framing[platformID]; ok {
+		return &f
+	}
+	return nil
+}
+
+// imageAspect is the canvas aspect ratio of an image: the framed one, or its own (clamped).
+func imageAspect(as store.Asset, platformID string, c media.ImageConstraints) float64 {
+	if f := frameOf(as, platformID); f != nil && f.Aspect > 0 {
+		return c.ClampAspect(f.Aspect)
+	}
+	return c.CanvasAspect(as.Info)
 }
 
 // ensureRendition records the rendition of one asset for one platform and

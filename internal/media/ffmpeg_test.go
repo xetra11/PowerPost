@@ -26,7 +26,7 @@ func TestTranscodeRealFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := NewPlan(info, reels, StrategyBlur, "libx264")
+	plan := NewPlan(info, reels, StrategyBlur, "libx264", nil)
 	out := filepath.Join(dir, "out.mp4")
 	var last float64
 	if err := r.Transcode(ctx, src, out, plan, info.Duration, func(f float64) { last = f }); err != nil {

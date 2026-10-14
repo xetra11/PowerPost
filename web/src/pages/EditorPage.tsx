@@ -16,6 +16,7 @@ import {
 } from '../api'
 import { ErrorBanner, IssueList, OptionsForm, StatusBadge, targetSummary } from '../components/common'
 import { CoverPicker } from '../components/CoverPicker'
+import { FramingEditor } from '../components/FramingEditor'
 import { usePolling } from '../usePolling'
 import { useFollowProject } from '../project'
 
@@ -283,8 +284,8 @@ export default function EditorPage() {
             </select>
             <small className="hint">
               {post.kind === 'image'
-                ? "Used when an image's aspect ratio doesn't fit a platform (Instagram: 4:5 to 1.91:1, and every carousel image takes the first one's)."
-                : "Used when the video isn't already vertical."}
+                ? "Used when an image's aspect ratio doesn't fit a platform (Instagram: 4:5 to 1.91:1, and every carousel image takes the first one's). Fine-tune per platform under Framing."
+                : "Used when the video isn't already vertical. Fine-tune per platform under Framing."}
             </small>
           </label>
 
@@ -335,6 +336,22 @@ export default function EditorPage() {
           </div>
         </article>
       </div>
+
+      {post.assets.length > 0 && platforms.length > 0 && (
+        <FramingEditor
+          post={post}
+          platforms={platforms}
+          disabled={!editable}
+          onSave={async (assetId, ids, frame) => {
+            setError(null)
+            try {
+              setPost(await api.setFraming(id, assetId, ids, frame))
+            } catch (e) {
+              setError((e as Error).message)
+            }
+          }}
+        />
+      )}
 
       <h3>Platforms</h3>
       {post.targets.map((t) => {

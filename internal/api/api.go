@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"powerposter/internal/app"
+	"powerposter/internal/media"
 )
 
 type Server struct {
@@ -44,6 +45,7 @@ func (s *Server) PrivateHandler() http.Handler {
 	mux.HandleFunc("POST /api/posts/{id}/media", s.uploadMedia)
 	mux.HandleFunc("PUT /api/posts/{id}/media/order", s.reorderMedia)
 	mux.HandleFunc("DELETE /api/posts/{id}/media/{asset}", s.removeMedia)
+	mux.HandleFunc("PUT /api/posts/{id}/media/{asset}/framing", s.setFraming)
 	mux.HandleFunc("POST /api/posts/{id}/approve", s.approve)
 	mux.HandleFunc("POST /api/posts/{id}/unapprove", s.unapprove)
 	mux.HandleFunc("POST /api/posts/{id}/publish", s.publish)
@@ -280,6 +282,28 @@ func (s *Server) removeMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.App.RemoveMedia(r.Context(), id, asset)
+	s.respond(w, v, err)
+}
+
+// setFraming places one media file by hand for some platforms; "frame": null resets it.
+func (s *Server) setFraming(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	asset, err := strconv.ParseInt(r.PathValue("asset"), 10, 64)
+	if err != nil || asset <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid media id")
+		return
+	}
+	var in struct {
+		Platforms []string     `json:"platforms"`
+		Frame     *media.Frame `json:"frame"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	v, err := s.App.SetFraming(r.Context(), id, asset, in.Platforms, in.Frame)
 	s.respond(w, v, err)
 }
 
