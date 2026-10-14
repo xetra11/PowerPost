@@ -54,15 +54,33 @@ type Options struct {
 func (a *Adapter) ID() platform.ID     { return ID }
 func (a *Adapter) DisplayName() string { return "Instagram" }
 func (a *Adapter) SupportedKinds() []platform.PostKind {
-	return []platform.PostKind{platform.KindVideo}
+	return []platform.PostKind{platform.KindVideo, platform.KindImage}
 }
 func (a *Adapter) Configured() bool             { return a.AppID != "" && a.AppSecret != "" }
 func (a *Adapter) Auth() platform.Authenticator { return a }
 
-// Constraints follow Meta's Reels specs for API publishing. Verify against
+// Constraints follow Meta's specs for API publishing (Reels; images and
+// carousels). Verify against
 // https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media
 // when they change.
-func (a *Adapter) Constraints(platform.PostKind) platform.Constraints {
+func (a *Adapter) Constraints(kind platform.PostKind) platform.Constraints {
+	caption := platform.CaptionRules{MaxChars: 2200, MaxHashtags: 30, MaxMentions: 20}
+	if kind == platform.KindImage {
+		return platform.Constraints{
+			Image: &media.ImageConstraints{
+				Formats:        []string{"jpeg"},
+				MaxWidth:       1080, // Instagram takes up to 1440 but shows 1080
+				MaxHeight:      1350,
+				AspectMin:      0.8, // 4:5 portrait
+				AspectMax:      1.91,
+				MaxBytes:       8 << 20,
+				MaxCount:       10,
+				SameAspect:     true, // a carousel is cropped to its first image otherwise
+				NeedsPublicURL: true, // image_url only; there is no image upload
+			},
+			Caption: caption,
+		}
+	}
 	return platform.Constraints{
 		Video: &media.VideoConstraints{
 			Containers:         []string{"mp4", "mov"},
@@ -82,7 +100,7 @@ func (a *Adapter) Constraints(platform.PostKind) platform.Constraints {
 			MaxBitrateKbps:     25000,
 			AudioSampleRateMax: 48000,
 		},
-		Caption: platform.CaptionRules{MaxChars: 2200, MaxHashtags: 30, MaxMentions: 20},
+		Caption: caption,
 	}
 }
 
@@ -92,7 +110,7 @@ func (a *Adapter) OptionsSchema() json.RawMessage {
   "properties": {
     "share_to_feed": {
       "type": "boolean",
-      "title": "Also show in feed",
+      "title": "Also show in feed (reels)",
       "description": "Show the reel in your profile grid and followers' feed, not only in the Reels tab.",
       "default": true
     }
@@ -216,6 +234,45 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	uid := pc.Token.AccountID
 	token := pc.Token.AccessToken
 
+	if err := a.checkQuota(ctx, pc, token, uid); err != nil {
+		return platform.PublishResult{}, err
+	}
+	var containerID string
+	var err error
+	if t.Kind == platform.KindImage {
+		containerID, err = a.imageContainer(ctx, pc, token, uid, t)
+	} else {
+		containerID, err = a.reelContainer(ctx, pc, token, uid, t, o)
+	}
+	if err != nil {
+		return platform.PublishResult{RemoteID: containerID}, err
+	}
+
+	pc.Progress("processing on Instagram")
+	if err := a.waitFinished(ctx, token, containerID, pc); err != nil {
+		return platform.PublishResult{RemoteID: containerID}, err
+	}
+
+	pc.Progress("publishing")
+	var published struct {
+		ID string `json:"id"`
+	}
+	if err := a.graphPost(ctx, token, "/"+uid+"/media_publish", url.Values{"creation_id": {containerID}}, &published); err != nil {
+		return platform.PublishResult{RemoteID: containerID}, fmt.Errorf("publish: %w", err)
+	}
+
+	res := platform.PublishResult{RemoteID: published.ID}
+	var media struct {
+		Permalink string `json:"permalink"`
+	}
+	if err := a.graphGet(ctx, token, "/"+published.ID, url.Values{"fields": {"permalink"}}, &media); err != nil {
+		pc.Log("could not read permalink: %v", err)
+	}
+	res.Permalink = media.Permalink
+	return res, nil
+}
+
+func (a *Adapter) checkQuota(ctx context.Context, pc platform.PublishContext, token, uid string) error {
 	pc.Progress("checking quota")
 	var limit struct {
 		Data []struct {
@@ -228,9 +285,13 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	if err := a.graphGet(ctx, token, "/"+uid+"/content_publishing_limit", url.Values{"fields": {"quota_usage,config"}}, &limit); err != nil {
 		pc.Log("quota check failed (continuing): %v", err)
 	} else if len(limit.Data) > 0 && limit.Data[0].Config.QuotaTotal > 0 && limit.Data[0].QuotaUsage >= limit.Data[0].Config.QuotaTotal {
-		return platform.PublishResult{}, fmt.Errorf("Instagram publishing quota reached (%d/%d in the last 24 h)", limit.Data[0].QuotaUsage, limit.Data[0].Config.QuotaTotal)
+		return fmt.Errorf("Instagram publishing quota reached (%d/%d in the last 24 h)", limit.Data[0].QuotaUsage, limit.Data[0].Config.QuotaTotal)
 	}
+	return nil
+}
 
+// reelContainer creates the container of a reel and uploads the video.
+func (a *Adapter) reelContainer(ctx context.Context, pc platform.PublishContext, token, uid string, t platform.ResolvedTarget, o Options) (string, error) {
 	pc.Progress("creating container")
 	form := url.Values{
 		"media_type":    {"REELS"},
@@ -264,43 +325,79 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	}
 	if err := a.graphPost(ctx, token, "/"+uid+"/media", form, &container); err != nil {
 		if !hasPublic && strings.Contains(err.Error(), "video_url") {
-			return platform.PublishResult{}, fmt.Errorf("Instagram needs to download the video from a public link for this account. Set up the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL, see README → Tunnel) and retry: %w", err)
+			return "", fmt.Errorf("Instagram needs to download the video from a public link for this account. Set up the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL, see README → Tunnel) and retry: %w", err)
 		}
-		return platform.PublishResult{}, fmt.Errorf("create container: %w", err)
+		return "", fmt.Errorf("create container: %w", err)
 	}
 	pc.Log("container %s created", container.ID)
 
 	if hasPublic {
-		pc.Log("Instagram fetches the video from %s", strings.SplitN(publicURL, "/public-media/", 2)[0]+"/public-media/…")
-	} else {
-		pc.Progress("uploading")
-		if err := a.upload(ctx, token, container.ID, t.FilePath); err != nil {
-			return platform.PublishResult{RemoteID: container.ID}, fmt.Errorf("upload: %w", err)
+		pc.Log("Instagram fetches the video from %s", redactPublic(publicURL))
+		return container.ID, nil
+	}
+	pc.Progress("uploading")
+	if err := a.upload(ctx, token, container.ID, t.FilePath); err != nil {
+		return container.ID, fmt.Errorf("upload: %w", err)
+	}
+	return container.ID, nil
+}
+
+// imageContainer creates the container of an image post: one image, or a
+// carousel of child containers. Instagram only takes images by public link.
+func (a *Adapter) imageContainer(ctx context.Context, pc platform.PublishContext, token, uid string, t platform.ResolvedTarget) (string, error) {
+	if len(t.Images) == 0 {
+		return "", fmt.Errorf("the post has no converted images")
+	}
+	urls := make([]string, len(t.Images))
+	for i, img := range t.Images {
+		ok := false
+		if pc.PublicURL != nil {
+			urls[i], ok = pc.PublicURL(img.Path)
+		}
+		if !ok {
+			return "", fmt.Errorf("Instagram downloads images from a public link. Set up the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL, see README → Tunnel) and retry")
 		}
 	}
+	pc.Log("Instagram fetches %d image(s) from %s", len(urls), redactPublic(urls[0]))
 
-	pc.Progress("processing on Instagram")
-	if err := a.waitFinished(ctx, token, container.ID, pc); err != nil {
-		return platform.PublishResult{RemoteID: container.ID}, err
-	}
-
-	pc.Progress("publishing")
-	var published struct {
+	var container struct {
 		ID string `json:"id"`
 	}
-	if err := a.graphPost(ctx, token, "/"+uid+"/media_publish", url.Values{"creation_id": {container.ID}}, &published); err != nil {
-		return platform.PublishResult{RemoteID: container.ID}, fmt.Errorf("publish: %w", err)
+	if len(urls) == 1 {
+		pc.Progress("creating container")
+		if err := a.graphPost(ctx, token, "/"+uid+"/media", url.Values{"image_url": {urls[0]}, "caption": {t.Caption}}, &container); err != nil {
+			return "", fmt.Errorf("create container: %w", err)
+		}
+		pc.Log("container %s created", container.ID)
+		return container.ID, nil
 	}
 
-	res := platform.PublishResult{RemoteID: published.ID}
-	var media struct {
-		Permalink string `json:"permalink"`
+	children := make([]string, len(urls))
+	for i, u := range urls {
+		pc.Progress(fmt.Sprintf("adding image %d/%d", i+1, len(urls)))
+		var child struct {
+			ID string `json:"id"`
+		}
+		if err := a.graphPost(ctx, token, "/"+uid+"/media", url.Values{"image_url": {u}, "is_carousel_item": {"true"}}, &child); err != nil {
+			return "", fmt.Errorf("image %d: %w", i+1, err)
+		}
+		if err := a.waitFinished(ctx, token, child.ID, pc); err != nil {
+			return "", fmt.Errorf("image %d: %w", i+1, err)
+		}
+		children[i] = child.ID
 	}
-	if err := a.graphGet(ctx, token, "/"+published.ID, url.Values{"fields": {"permalink"}}, &media); err != nil {
-		pc.Log("could not read permalink: %v", err)
+	pc.Progress("creating carousel")
+	form := url.Values{"media_type": {"CAROUSEL"}, "children": {strings.Join(children, ",")}, "caption": {t.Caption}}
+	if err := a.graphPost(ctx, token, "/"+uid+"/media", form, &container); err != nil {
+		return "", fmt.Errorf("create carousel: %w", err)
 	}
-	res.Permalink = media.Permalink
-	return res, nil
+	pc.Log("carousel %s created from %d images", container.ID, len(children))
+	return container.ID, nil
+}
+
+// redactPublic shortens a signed public media link for the log.
+func redactPublic(u string) string {
+	return strings.SplitN(u, "/public-media/", 2)[0] + "/public-media/…"
 }
 
 func (a *Adapter) upload(ctx context.Context, token, containerID, path string) error {
@@ -344,7 +441,7 @@ func (a *Adapter) waitFinished(ctx context.Context, token, containerID string, p
 		case "FINISHED":
 			return nil
 		case "ERROR", "EXPIRED":
-			return fmt.Errorf("Instagram rejected the video (%s): %s", s.StatusCode, s.Status)
+			return fmt.Errorf("Instagram rejected the media (%s): %s", s.StatusCode, s.Status)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("Instagram is still processing after %s (status %s)", a.PollTimeout, s.StatusCode)

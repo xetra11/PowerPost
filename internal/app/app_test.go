@@ -207,7 +207,7 @@ func TestValidationErrors(t *testing.T) {
 		t.Fatalf("valid option: %v %s", err, v.Targets[0].Options)
 	}
 	// Not a video.
-	if _, err := a.AttachUpload(ctx, v.ID, strings.NewReader("hello"), "notes.txt"); app.KindOf(err) != app.KindInvalid {
+	if _, err := a.AttachUpload(ctx, v.ID, strings.NewReader("hello"), "notes.txt", false); app.KindOf(err) != app.KindInvalid {
 		t.Fatalf("non-video upload: %v", err)
 	}
 }
@@ -572,5 +572,117 @@ func TestDuplicatePartlyPublishedPost(t *testing.T) {
 	})
 	if ig.PublishedCount() != 1 || tt.PublishedCount() != 1 {
 		t.Fatalf("ig=%d tt=%d", ig.PublishedCount(), tt.PublishedCount())
+	}
+}
+
+func TestImagePostFlow(t *testing.T) {
+	fake := &testutil.FakeAdapter{Name: "fake"}
+	a := testutil.NewApp(t, fake)
+	ctx := context.Background()
+
+	v, err := a.CreatePost(ctx, app.CreatePostInput{ProjectID: testutil.Project, Title: "Screens", Caption: "New biome"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	video, err := a.ResolveInboxPath(testutil.MakeVideo(t, a, "clip.mp4", 640, 360, 30, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wide := testutil.MakeImageSized(t, a, "wide.png", 1920, 1080)
+	tall := testutil.MakeImageSized(t, a, "tall.jpg", 1080, 1920)
+	// JPEGs used to get no thumbnail (ffmpeg writes nothing when seeking a still image).
+	extra := testutil.MakeImageSized(t, a, "extra.webp", 800, 800)
+
+	// A post has one video or images, never both.
+	if _, err := a.AttachFiles(ctx, v.ID, []app.AttachSource{{Path: video}, {Path: wide}}, false); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("video and image together: %v", err)
+	}
+	if v, err = a.AttachFile(ctx, v.ID, video, "", false); err != nil || v.Kind != "video" {
+		t.Fatalf("attach video: %v %s", err, v.Kind)
+	}
+	// Images replace the video.
+	if v, err = a.AttachFiles(ctx, v.ID, []app.AttachSource{{Path: wide}, {Path: tall}}, false); err != nil {
+		t.Fatal(err)
+	}
+	if v.Kind != "image" || len(v.Assets) != 2 || v.Assets[0].OriginalName != "wide.png" || !v.Assets[0].Info.Image || v.Assets[1].ThumbURL == "" {
+		t.Fatalf("after attaching images: kind %s assets %+v", v.Kind, v.Assets)
+	}
+	v = testutil.WaitReady(t, a, v.ID)
+	tg := v.Targets[0]
+	if len(tg.Renditions) != 2 || !v.Ready {
+		t.Fatalf("renditions %+v ready=%v issues=%v", tg.Renditions, v.Ready, v.Issues)
+	}
+	// The carousel takes the first image's aspect ratio (16:9, inside 0.8–1.91).
+	for i, r := range tg.Renditions {
+		if r.Info == nil || r.Info.Width != 1080 || r.Info.Height != 608 || r.Plan.Format != "jpeg" || r.AssetID != v.Assets[i].ID {
+			t.Fatalf("rendition %d: %+v %+v", i, r.Plan, r.Info)
+		}
+	}
+	if !strings.Contains(strings.Join(tg.Renditions[0].Plan.Fixes, ";"), "Converted PNG → JPEG") ||
+		!strings.Contains(strings.Join(tg.Renditions[1].Plan.Fixes, ";"), "Reframed 1080x1920 → 1080x608") {
+		t.Fatalf("fixes %v / %v", tg.Renditions[0].Plan.Fixes, tg.Renditions[1].Plan.Fixes)
+	}
+
+	// Reordering puts the portrait image first: Instagram-style 4:5 canvas for both.
+	if v, err = a.ReorderMedia(ctx, v.ID, []int64{v.Assets[1].ID, v.Assets[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.ReorderMedia(ctx, v.ID, []int64{v.Assets[0].ID}); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("incomplete order: %v", err)
+	}
+	v = testutil.WaitReady(t, a, v.ID)
+	if v.Assets[0].OriginalName != "tall.jpg" {
+		t.Fatalf("order %+v", v.Assets)
+	}
+	for _, r := range v.Targets[0].Renditions {
+		if r.Info.Width != 1080 || r.Info.Height != 1350 {
+			t.Fatalf("after reorder: %dx%d", r.Info.Width, r.Info.Height)
+		}
+	}
+
+	// More images than any platform takes are refused; up to the limit they are added.
+	if _, err := a.AttachFiles(ctx, v.ID, []app.AttachSource{{Path: extra}, {Path: wide}}, false); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("too many images: %v", err)
+	}
+	if v, err = a.AttachFile(ctx, v.ID, extra, "", false); err != nil || len(v.Assets) != 3 {
+		t.Fatalf("third image: %v %d", err, len(v.Assets))
+	}
+	if v, err = a.RemoveMedia(ctx, v.ID, v.Assets[2].ID); err != nil || len(v.Assets) != 2 {
+		t.Fatalf("remove: %v %d", err, len(v.Assets))
+	}
+	if _, err := a.SetCoverImage(ctx, v.ID, strings.NewReader("x"), "c.png"); app.KindOf(err) != app.KindInvalid {
+		t.Fatalf("cover on image post: %v", err)
+	}
+	if v.CoverURL != "" || v.CoverFrameURL != "" {
+		t.Fatalf("image posts have no cover: %q %q", v.CoverURL, v.CoverFrameURL)
+	}
+
+	v = testutil.WaitReady(t, a, v.ID)
+	if v, err = a.Approve(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	if v, err = a.Publish(ctx, v.ID, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WaitFor(t, "published", 10*time.Second, func() bool {
+		v, _ = a.GetPost(ctx, v.ID)
+		return v.Status == app.StatusPublished
+	})
+	if fake.PublishedCount() != 1 || fake.Published[0].Kind != platform.KindImage || len(fake.Published[0].Images) != 2 || fake.Published[0].FilePath != "" {
+		t.Fatalf("published %+v", fake.Published)
+	}
+
+	// Duplicates keep the images and their conversions.
+	dup, err := a.DuplicatePost(ctx, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dup.Kind != "image" || len(dup.Assets) != 2 || dup.Assets[0].OriginalName != "tall.jpg" || !dup.Ready {
+		t.Fatalf("duplicate %s %+v ready=%v issues=%v", dup.Kind, dup.Assets, dup.Ready, dup.Issues)
+	}
+
+	// A video replaces the images again.
+	if dup, err = a.AttachFile(ctx, dup.ID, video, "", false); err != nil || dup.Kind != "video" || len(dup.Assets) != 1 {
+		t.Fatalf("video after images: %v %s %d", err, dup.Kind, len(dup.Assets))
 	}
 }

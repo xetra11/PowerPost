@@ -34,7 +34,9 @@ func (s Strategy) label() string {
 
 // Plan is the minimal set of operations that makes a file fit a platform.
 type Plan struct {
-	VideoCopy   bool     `json:"videoCopy"` // true: no video re-encode, just remux
+	Image       bool     `json:"image,omitempty"`  // still image (see NewImagePlan), not a video
+	Format      string   `json:"format,omitempty"` // images: output format, jpeg | png
+	VideoCopy   bool     `json:"videoCopy"`        // true: no re-encode (video: just remux; image: file used as is)
 	Width       int      `json:"width"`
 	Height      int      `json:"height"`
 	Fill        bool     `json:"fill"` // aspect differs: apply Strategy
@@ -153,22 +155,7 @@ func (p Plan) Args(in, out string) []string {
 	if p.VideoCopy {
 		args = append(args, "-map", "0:v:0", "-c:v", "copy")
 	} else {
-		w, h := p.Width, p.Height
-		var graph string
-		switch {
-		case p.Fill && p.Strategy == StrategyCrop:
-			graph = fmt.Sprintf("[0:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d", w, h, w, h)
-		case p.Fill && p.Strategy == StrategyPad:
-			graph = fmt.Sprintf("[0:v]scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black", w, h, w, h)
-		case p.Fill:
-			graph = fmt.Sprintf("[0:v]split=2[bgsrc][fgsrc];"+
-				"[bgsrc]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,boxblur=20:2[bg];"+
-				"[fgsrc]scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2[fg];"+
-				"[bg][fg]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2", w, h, w, h, w, h)
-		default:
-			graph = fmt.Sprintf("[0:v]scale=%d:%d", w&^1, h&^1)
-		}
-		graph += ",setsar=1"
+		graph := p.fitGraph() + ",setsar=1"
 		if p.FPS > 0 {
 			graph += fmt.Sprintf(",fps=%g", p.FPS)
 		}
@@ -186,6 +173,25 @@ func (p Plan) Args(in, out string) []string {
 		args = append(args, "-map", "0:a:0", "-c:a", "copy")
 	}
 	return append(args, "-movflags", "+faststart", "-f", "mp4", out)
+}
+
+// fitGraph scales the input to Width x Height, filling a different aspect
+// ratio with the plan's strategy.
+func (p Plan) fitGraph() string {
+	w, h := p.Width, p.Height
+	switch {
+	case p.Fill && p.Strategy == StrategyCrop:
+		return fmt.Sprintf("[0:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d", w, h, w, h)
+	case p.Fill && p.Strategy == StrategyPad:
+		return fmt.Sprintf("[0:v]scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black", w, h, w, h)
+	case p.Fill:
+		return fmt.Sprintf("[0:v]split=2[bgsrc][fgsrc];"+
+			"[bgsrc]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,boxblur=20:2[bg];"+
+			"[fgsrc]scale=%d:%d:force_original_aspect_ratio=decrease:force_divisible_by=2[fg];"+
+			"[bg][fg]overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2", w, h, w, h, w, h)
+	default:
+		return fmt.Sprintf("[0:v]scale=%d:%d", w&^1, h&^1)
+	}
 }
 
 func encoderArgs(encoder string, maxrate int) []string {

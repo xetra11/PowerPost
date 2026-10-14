@@ -26,15 +26,17 @@ export interface MediaInfo {
   audioSampleRate?: number
   audioChannels?: number
   size: number
+  image?: boolean // a still image, not a video
 }
 
 export interface Rendition {
   id: number
+  assetId: number
   platform: string
   status: 'pending' | 'processing' | 'ready' | 'failed'
   progress: number
   info: MediaInfo | null
-  plan: { fixes: string[] }
+  plan: { fixes: string[]; format?: string }
   error: string
   url: string
 }
@@ -59,7 +61,8 @@ export interface Target {
   finalCaption: string
   captionLength: number
   captionMax: number
-  rendition: Rendition | null
+  rendition: Rendition | null // the video, or the first image
+  renditions: Rendition[] // one per post media, in order
   issues: Issue[]
   notices: string[]
   canPublish: boolean
@@ -78,6 +81,17 @@ export interface Stats {
 export type PostStatus = 'draft' | 'approved' | 'publishing' | 'published' | 'partial' | 'failed'
 export type AspectStrategy = 'blur' | 'crop' | 'pad'
 
+export type PostKind = 'video' | 'image'
+
+export interface Asset {
+  id: number
+  originalName: string
+  info: MediaInfo
+  position: number
+  url: string
+  thumbUrl: string
+}
+
 export interface ProjectRef {
   id: number
   slug: string
@@ -89,7 +103,7 @@ export interface Post {
   projectId: number
   project: ProjectRef
   title: string
-  kind: string
+  kind: PostKind // follows the attached media: one video, or images (a carousel when several)
   caption: string
   hashtags: string[]
   aspectStrategy: AspectStrategy
@@ -101,7 +115,8 @@ export interface Post {
   createdBy: 'ui' | 'mcp'
   createdAt: string
   updatedAt: string
-  asset: { id: number; originalName: string; info: MediaInfo; url: string; thumbUrl: string } | null
+  asset: Asset | null // the video, or the first image
+  assets: Asset[]
   targets: Target[]
   issues: Issue[]
   ready: boolean
@@ -208,6 +223,8 @@ export const api = {
   stats: (id: number) => request<Record<string, Stats>>('GET', `/api/posts/${id}/stats`),
   checkLive: (id: number) => request<Post>('POST', `/api/posts/${id}/check-live`, {}),
   clearCover: (id: number) => request<Post>('DELETE', `/api/posts/${id}/cover`),
+  removeMedia: (id: number, assetId: number) => request<Post>('DELETE', `/api/posts/${id}/media/${assetId}`),
+  reorderMedia: (id: number, ids: number[]) => request<Post>('PUT', `/api/posts/${id}/media/order`, { ids }),
   attempts: (id: number) => request<Attempt[]>('GET', `/api/posts/${id}/attempts`),
   platforms: (projectId: number) => request<Platform[]>('GET', `/api/projects/${projectId}/platforms`),
   accountInfo: (projectId: number, platform: string) =>
@@ -239,11 +256,14 @@ export async function uploadCover(id: number, file: File): Promise<Post> {
   return data as Post
 }
 
-/** Uploads a video with progress (fetch can't report upload progress). */
-export function uploadMedia(id: number, file: File, onProgress: (fraction: number) => void): Promise<Post> {
+/**
+ * Uploads a video or an image with progress (fetch can't report upload progress).
+ * A video replaces the post's media; images are added unless replace is set.
+ */
+export function uploadMedia(id: number, file: File, onProgress: (fraction: number) => void, replace = false): Promise<Post> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
-    xhr.open('POST', `/api/posts/${id}/media`)
+    xhr.open('POST', `/api/posts/${id}/media${replace ? '?replace=1' : ''}`)
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total)
     xhr.onload = () => {
       let data: { error?: string } | null = null
@@ -274,10 +294,36 @@ export function formatBytes(n: number): string {
   return `${(n / (1 << 20)).toFixed(1)} MB`
 }
 
+/** File format of a still image: JPEG, PNG, WEBP… */
+export function imageFormat(i: MediaInfo): string {
+  return (i.videoCodec === 'mjpeg' ? 'jpeg' : i.videoCodec).toUpperCase()
+}
+
 export function describeMedia(i: MediaInfo): string {
+  if (i.image) return [`${i.width}×${i.height}`, imageFormat(i), formatBytes(i.size)].join(' · ')
   const parts = [`${i.width}×${i.height}`, `${Math.round(i.fps * 100) / 100} fps`, formatDuration(i.duration), formatBytes(i.size)]
   parts.push(i.hasAudio ? `${i.videoCodec}/${i.audioCodec}` : `${i.videoCodec}, no audio`)
   return parts.join(' · ')
+}
+
+/** Summary of several converted images, e.g. "3 images · 1080×1350 · JPEG · 2.1 MB". */
+export function describeImages(infos: MediaInfo[]): string {
+  if (infos.length === 1) return describeMedia(infos[0])
+  const sizes = [...new Set(infos.map((i) => `${i.width}×${i.height}`))]
+  const formats = [...new Set(infos.map(imageFormat))]
+  const total = infos.reduce((n, i) => n + i.size, 0)
+  return [`${infos.length} images`, sizes.length === 1 ? sizes[0] : 'mixed sizes', formats.join('/'), formatBytes(total)].join(' · ')
+}
+
+/** True while any media of an enabled platform is still being converted. */
+export function isConverting(p: Post | null): boolean {
+  return (
+    !!p &&
+    p.assets.length > 0 &&
+    p.targets.some(
+      (t) => t.enabled && (t.renditions.length < p.assets.length || t.renditions.some((r) => r.status === 'pending' || r.status === 'processing')),
+    )
+  )
 }
 
 export function parseHashtags(text: string): string[] {

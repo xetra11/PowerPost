@@ -251,3 +251,102 @@ func TestStatsAndEmbed(t *testing.T) {
 		}
 	}
 }
+
+// fakeImageGraph answers the image/carousel container calls and records them.
+func fakeImageGraph(t *testing.T) (*httptest.Server, *[]string) {
+	t.Helper()
+	var calls []string
+	children := 0
+	mux := http.NewServeMux()
+	ok := func(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
+	mux.HandleFunc("GET /v23.0/17841/content_publishing_limit", func(w http.ResponseWriter, r *http.Request) {
+		ok(w, map[string]any{"data": []any{}})
+	})
+	mux.HandleFunc("POST /v23.0/17841/media", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.FormValue("is_carousel_item") == "true":
+			children++
+			id := fmt.Sprintf("K%d", children)
+			calls = append(calls, fmt.Sprintf("child %s caption=%q", r.FormValue("image_url"), r.FormValue("caption")))
+			ok(w, map[string]any{"id": id})
+		case r.FormValue("media_type") == "CAROUSEL":
+			calls = append(calls, fmt.Sprintf("carousel %s caption=%q", r.FormValue("children"), r.FormValue("caption")))
+			ok(w, map[string]any{"id": "C9"})
+		default:
+			calls = append(calls, fmt.Sprintf("image type=%q %s caption=%q", r.FormValue("media_type"), r.FormValue("image_url"), r.FormValue("caption")))
+			ok(w, map[string]any{"id": "C9"})
+		}
+	})
+	mux.HandleFunc("GET /v23.0/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("fields"), "permalink") {
+			ok(w, map[string]any{"permalink": "https://www.instagram.com/p/xyz/"})
+			return
+		}
+		calls = append(calls, "status "+r.PathValue("id"))
+		ok(w, map[string]any{"status_code": "FINISHED"})
+	})
+	mux.HandleFunc("POST /v23.0/17841/media_publish", func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, "publish "+r.FormValue("creation_id"))
+		ok(w, map[string]any{"id": "M9"})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, &calls
+}
+
+func imageTarget(n int) platform.ResolvedTarget {
+	tg := platform.ResolvedTarget{Kind: platform.KindImage, Caption: "New biome", Options: json.RawMessage(`{}`)}
+	for i := 1; i <= n; i++ {
+		tg.Images = append(tg.Images, platform.File{Path: fmt.Sprintf("/data/r/%d.jpg", i)})
+	}
+	return tg
+}
+
+func publicContext() platform.PublishContext {
+	pc := testContext()
+	pc.PublicURL = func(path string) (string, bool) {
+		return "https://pp.example.com/public-media/" + filepath.Base(path), true
+	}
+	return pc
+}
+
+func TestPublishImage(t *testing.T) {
+	srv, calls := fakeImageGraph(t)
+	res, err := newTestAdapter(srv.URL).Publish(context.Background(), publicContext(), imageTarget(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`image type="" https://pp.example.com/public-media/1.jpg caption="New biome"`,
+		"status C9",
+		"publish C9",
+	}
+	if strings.Join(*calls, "\n") != strings.Join(want, "\n") || res.RemoteID != "M9" || res.Permalink != "https://www.instagram.com/p/xyz/" {
+		t.Fatalf("calls:\n%s\nresult %+v", strings.Join(*calls, "\n"), res)
+	}
+}
+
+func TestPublishCarousel(t *testing.T) {
+	srv, calls := fakeImageGraph(t)
+	if _, err := newTestAdapter(srv.URL).Publish(context.Background(), publicContext(), imageTarget(3)); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		`child https://pp.example.com/public-media/1.jpg caption=""`, "status K1",
+		`child https://pp.example.com/public-media/2.jpg caption=""`, "status K2",
+		`child https://pp.example.com/public-media/3.jpg caption=""`, "status K3",
+		`carousel K1,K2,K3 caption="New biome"`, "status C9",
+		"publish C9",
+	}
+	if strings.Join(*calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls:\n%s\nwant:\n%s", strings.Join(*calls, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestPublishImageNeedsTunnel(t *testing.T) {
+	srv, calls := fakeImageGraph(t)
+	_, err := newTestAdapter(srv.URL).Publish(context.Background(), testContext(), imageTarget(2))
+	if err == nil || !strings.Contains(err.Error(), "tunnel") || len(*calls) != 0 {
+		t.Fatalf("expected tunnel error before any upload, got %v (calls %v)", err, *calls)
+	}
+}

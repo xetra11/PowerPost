@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -56,7 +57,7 @@ type Options struct {
 func (a *Adapter) ID() platform.ID     { return ID }
 func (a *Adapter) DisplayName() string { return "Discord" }
 func (a *Adapter) SupportedKinds() []platform.PostKind {
-	return []platform.PostKind{platform.KindVideo}
+	return []platform.PostKind{platform.KindVideo, platform.KindImage}
 }
 
 // Configured is always true: webhooks need no app credentials.
@@ -64,8 +65,21 @@ func (a *Adapter) Configured() bool             { return true }
 func (a *Adapter) Auth() platform.Authenticator { return noAuth{} }
 
 // Constraints: Discord plays any H.264 MP4 inline; the real limit is the
-// server's upload size, which the converter targets via the bitrate.
-func (a *Adapter) Constraints(platform.PostKind) platform.Constraints {
+// server's upload size, which the converter targets via the bitrate. Images
+// keep their format (PNG stays lossless) and are shown as a gallery.
+func (a *Adapter) Constraints(kind platform.PostKind) platform.Constraints {
+	if kind == platform.KindImage {
+		return platform.Constraints{
+			Image: &media.ImageConstraints{
+				Formats:   []string{"jpeg", "png", "webp"},
+				MaxWidth:  4096,
+				MaxHeight: 4096,
+				MaxBytes:  int64(a.MaxUploadMB) << 20,
+				MaxCount:  10, // attachments per message
+			},
+			Caption: platform.CaptionRules{MaxChars: 2000},
+		}
+	}
 	return platform.Constraints{
 		Video: &media.VideoConstraints{
 			Containers:         []string{"mp4", "mov"},
@@ -131,6 +145,14 @@ func (a *Adapter) Validate(t platform.ResolvedTarget) []platform.ValidationIssue
 	// The caption itself is checked by the app; this catches the ping pushing it over.
 	if n := utf8.RuneCountInString(content(t.Caption, o)); n > 2000 && utf8.RuneCountInString(t.Caption) <= 2000 {
 		out = append(out, issue(platform.SeverityError, "CAPTION_TOO_LONG", fmt.Sprintf("Message is %d characters including the ping; maximum is 2000.", n)))
+	}
+	var total int64
+	for _, img := range t.Images {
+		total += img.Info.Size
+	}
+	if limit := int64(a.MaxUploadMB) << 20; total > limit {
+		out = append(out, issue(platform.SeverityError, "FILES_TOO_LARGE",
+			fmt.Sprintf("The images are %s together; Discord takes %s per message. Remove images, or raise DISCORD_MAX_UPLOAD_MB if your server is boosted.", media.FormatBytes(total), media.FormatBytes(limit))))
 	}
 	// Bits per second of the whole file; low values mean the size limit squeezed it.
 	if t.File.Duration > 0 && t.File.Size > 0 {
@@ -272,41 +294,54 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 		return platform.PublishResult{}, fmt.Errorf("webhook: %w (was it deleted? Paste a new webhook URL in Settings)", err)
 	}
 
-	f, err := os.Open(t.FilePath)
-	if err != nil {
-		return platform.PublishResult{}, err
+	var files []attachment
+	if t.Kind == platform.KindImage {
+		for i, img := range t.Images {
+			ext := filepath.Ext(img.Path)
+			files = append(files, attachment{path: img.Path, name: fmt.Sprintf("post-%d-%d%s", t.PostID, i+1, ext), contentType: mime.TypeByExtension(ext)})
+		}
+		if len(files) == 0 {
+			return platform.PublishResult{}, errors.New("the post has no converted images")
+		}
+	} else {
+		files = []attachment{{path: t.FilePath, name: fmt.Sprintf("post-%d.mp4", t.PostID), contentType: "video/mp4"}}
 	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return platform.PublishResult{}, err
+	var total int64
+	limit := int64(a.MaxUploadMB) << 20
+	for i := range files {
+		st, err := os.Stat(files[i].path)
+		if err != nil {
+			return platform.PublishResult{}, err
+		}
+		files[i].size = st.Size()
+		total += st.Size()
 	}
-	if limit := int64(a.MaxUploadMB) << 20; st.Size() > limit {
-		return platform.PublishResult{}, fmt.Errorf("video is %s; the Discord upload limit is %s", media.FormatBytes(st.Size()), media.FormatBytes(limit))
+	if total > limit {
+		return platform.PublishResult{}, fmt.Errorf("the files are %s together; the Discord upload limit is %s", media.FormatBytes(total), media.FormatBytes(limit))
 	}
 
 	parse := []string{"users", "roles"}
 	if o.Mention == "here" || o.Mention == "everyone" {
 		parse = append(parse, "everyone") // covers @here too
 	}
-	filename := fmt.Sprintf("post-%d.mp4", t.PostID)
+	var meta []map[string]any
+	for i, f := range files {
+		meta = append(meta, map[string]any{"id": i, "filename": f.name})
+	}
 	payload := map[string]any{
 		"content":          content(t.Caption, o),
 		"allowed_mentions": map[string]any{"parse": parse},
-		"attachments":      []map[string]any{{"id": 0, "filename": filename}},
+		"attachments":      meta,
 	}
 	if o.ThreadName != "" {
 		payload["thread_name"] = o.ThreadName
 	}
 
 	pc.Progress("uploading")
-	pc.Log("uploading %s to webhook %q", media.FormatBytes(st.Size()), info.Name)
+	pc.Log("uploading %d file(s), %s, to webhook %q", len(files), media.FormatBytes(total), info.Name)
 	var msg message
 	for attempt := 0; ; attempt++ {
-		if _, err := f.Seek(0, io.SeekStart); err != nil {
-			return platform.PublishResult{}, err
-		}
-		err = a.execute(ctx, h, payload, filename, f, st.Size(), &msg)
+		err = a.execute(ctx, h, payload, files, &msg)
 		var rl *rateLimited
 		if !errors.As(err, &rl) || attempt == 2 {
 			break
@@ -321,7 +356,7 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	if err != nil {
 		var apiErr *platform.APIError
 		if errors.As(err, &apiErr) && apiErr.Status == http.StatusRequestEntityTooLarge {
-			return platform.PublishResult{}, fmt.Errorf("Discord refused the %s file as too large for this server; lower DISCORD_MAX_UPLOAD_MB: %w", media.FormatBytes(st.Size()), err)
+			return platform.PublishResult{}, fmt.Errorf("Discord refused the %s upload as too large for this server; lower DISCORD_MAX_UPLOAD_MB: %w", media.FormatBytes(total), err)
 		}
 		return platform.PublishResult{}, fmt.Errorf("upload: %w", err)
 	}
@@ -340,28 +375,59 @@ type rateLimited struct{ wait time.Duration }
 
 func (r *rateLimited) Error() string { return "rate limited" }
 
-// execute sends the multipart webhook request, streaming the file.
-func (a *Adapter) execute(ctx context.Context, h hook, payload map[string]any, filename string, file io.Reader, size int64, out *message) error {
+// attachment is a file sent with the webhook message.
+type attachment struct {
+	path, name, contentType string
+	size                    int64
+}
+
+// execute sends the multipart webhook request, streaming the files.
+func (a *Adapter) execute(ctx context.Context, h hook, payload map[string]any, files []attachment, out *message) error {
 	pj, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	var head bytes.Buffer
-	mw := multipart.NewWriter(&head)
+	// The multipart framing goes into buf; it is cut into segments between the
+	// files, which are streamed from disk.
+	var buf bytes.Buffer
+	var parts []io.Reader
+	var length int64
+	flush := func() {
+		parts = append(parts, bytes.NewReader(bytes.Clone(buf.Bytes())))
+		length += int64(buf.Len())
+		buf.Reset()
+	}
+	mw := multipart.NewWriter(&buf)
 	if err := mw.WriteField("payload_json", string(pj)); err != nil {
 		return err
 	}
-	hdr := textproto.MIMEHeader{}
-	hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files[0]"; filename=%q`, filepath.Base(filename)))
-	hdr.Set("Content-Type", "video/mp4")
-	if _, err := mw.CreatePart(hdr); err != nil {
+	for i, f := range files {
+		hdr := textproto.MIMEHeader{}
+		hdr.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files[%d]"; filename=%q`, i, filepath.Base(f.name)))
+		ct := f.contentType
+		if ct == "" {
+			ct = "application/octet-stream"
+		}
+		hdr.Set("Content-Type", ct)
+		if _, err := mw.CreatePart(hdr); err != nil {
+			return err
+		}
+		flush()
+		fh, err := os.Open(f.path)
+		if err != nil {
+			return err
+		}
+		defer fh.Close()
+		parts = append(parts, io.LimitReader(fh, f.size))
+		length += f.size
+	}
+	if err := mw.Close(); err != nil {
 		return err
 	}
-	tail := "\r\n--" + mw.Boundary() + "--\r\n"
+	flush()
 
-	body := io.MultiReader(bytes.NewReader(head.Bytes()), file, bytes.NewReader([]byte(tail)))
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, a.APIBase+h.path()+"?wait=true", body)
-	req.ContentLength = int64(head.Len()) + size + int64(len(tail))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, a.APIBase+h.path()+"?wait=true", io.MultiReader(parts...))
+	req.ContentLength = length
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	err = h.redact(platform.DoJSON(a.HTTP, req, out, discordError))

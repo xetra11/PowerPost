@@ -170,6 +170,38 @@ func TestPublicMediaLinks(t *testing.T) {
 	if rec := do(private, "GET", path, nil, nil); rec.Body.String() == "video-bytes" {
 		t.Fatal("private listener served the file")
 	}
+
+	// Converted images go out with their own content type.
+	img := filepath.Join(s.App.Cfg.DataDir, "media", "renditions", "9-def.jpg")
+	if err := os.WriteFile(img, []byte("jpeg-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link, _ = s.App.PublicMediaURL(img, time.Hour)
+	if rec := do(pub, "GET", strings.TrimPrefix(link, "https://pp.example.com"), nil, nil); rec.Code != 200 || rec.Header().Get("Content-Type") != "image/jpeg" {
+		t.Fatalf("image link: %d %s", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestTikTokVerificationFile(t *testing.T) {
+	s, private := newServer(t)
+	pub := s.PublicHandler()
+	for name, body := range map[string]string{"tiktokAbC123.txt": "tiktok-developers-site-verification=x", "secret.txt": "no", "clip.mp4": "no"} {
+		if err := os.WriteFile(filepath.Join(s.App.Cfg.InboxDir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rec := do(pub, "GET", "/tiktokAbC123.txt", nil, nil); rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), "tiktok-developers") {
+		t.Fatalf("signature file: %d %q", rec.Code, rec.Body)
+	}
+	// Nothing else from the inbox is public.
+	for _, p := range []string{"/secret.txt", "/clip.mp4", "/tiktokMissing.txt", "/tiktok..txt"} {
+		if rec := do(pub, "GET", p, nil, nil); rec.Code != 404 {
+			t.Errorf("public %s: %d", p, rec.Code)
+		}
+	}
+	if rec := do(private, "GET", "/tiktokAbC123.txt", nil, nil); strings.HasPrefix(rec.Body.String(), "tiktok-developers") {
+		t.Fatal("private listener served the signature file")
+	}
 }
 
 func TestProjectsAPI(t *testing.T) {

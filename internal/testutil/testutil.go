@@ -39,7 +39,7 @@ type FakeAdapter struct {
 func (f *FakeAdapter) ID() platform.ID     { return platform.ID(f.Name) }
 func (f *FakeAdapter) DisplayName() string { return "Fake " + f.Name }
 func (f *FakeAdapter) SupportedKinds() []platform.PostKind {
-	return []platform.PostKind{platform.KindVideo}
+	return []platform.PostKind{platform.KindVideo, platform.KindImage}
 }
 func (f *FakeAdapter) Configured() bool             { return true }
 func (f *FakeAdapter) Auth() platform.Authenticator { return fakeAuth{} }
@@ -50,7 +50,16 @@ func (f *FakeAdapter) DefaultOptions() json.RawMessage                          
 func (f *FakeAdapter) Validate(platform.ResolvedTarget) []platform.ValidationIssue { return nil }
 func (f *FakeAdapter) ReviewNotices(json.RawMessage) []string                      { return nil }
 
-func (f *FakeAdapter) Constraints(platform.PostKind) platform.Constraints {
+func (f *FakeAdapter) Constraints(kind platform.PostKind) platform.Constraints {
+	if kind == platform.KindImage {
+		return platform.Constraints{
+			Image: &media.ImageConstraints{
+				Formats: []string{"jpeg"}, MaxWidth: 1080, MaxHeight: 1350, AspectMin: 0.8, AspectMax: 1.91,
+				MaxBytes: 8 << 20, MaxCount: 3, SameAspect: true,
+			},
+			Caption: platform.CaptionRules{MaxChars: 100, MaxHashtags: 5},
+		}
+	}
 	return platform.Constraints{
 		Video: &media.VideoConstraints{
 			Containers: []string{"mp4", "mov"}, VideoCodecs: []string{"h264"}, AudioCodecs: []string{"aac"},
@@ -66,8 +75,17 @@ func (f *FakeAdapter) Publish(ctx context.Context, pc platform.PublishContext, t
 	if pc.Token.AccessToken != "fake-token" {
 		return platform.PublishResult{}, fmt.Errorf("wrong token %q", pc.Token.AccessToken)
 	}
-	if _, err := os.Stat(t.FilePath); err != nil {
-		return platform.PublishResult{}, err
+	files := []string{t.FilePath}
+	if t.Kind == platform.KindImage {
+		files = nil
+		for _, img := range t.Images {
+			files = append(files, img.Path)
+		}
+	}
+	for _, p := range files {
+		if _, err := os.Stat(p); err != nil {
+			return platform.PublishResult{}, err
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -225,8 +243,13 @@ func WaitReady(t *testing.T, a *app.App, id int64) app.PostView {
 			t.Fatal(err)
 		}
 		for _, tg := range v.Targets {
-			if tg.Enabled && (tg.Rendition == nil || tg.Rendition.Status == "pending" || tg.Rendition.Status == "processing") {
+			if tg.Enabled && len(tg.Renditions) < len(v.Assets) {
 				return false
+			}
+			for _, r := range tg.Renditions {
+				if tg.Enabled && (r.Status == "pending" || r.Status == "processing") {
+					return false
+				}
 			}
 		}
 		return true
@@ -247,11 +270,16 @@ func (f *FakeAdapter) SetDeleted(v bool) {
 	f.deleted = v
 }
 
-// MakeImage writes a test PNG into the app's inbox and returns its local path.
+// MakeImage writes a 1280x720 test PNG into the app's inbox and returns its local path.
 func MakeImage(t *testing.T, a *app.App, name string) string {
+	return MakeImageSized(t, a, name, 1280, 720)
+}
+
+// MakeImageSized writes a test image (format from the extension) into the app's inbox and returns its local path.
+func MakeImageSized(t *testing.T, a *app.App, name string, w, h int) string {
 	t.Helper()
 	out := filepath.Join(a.Cfg.InboxDir, name)
-	cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720", "-frames:v", "1", out)
+	cmd := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", fmt.Sprintf("testsrc2=size=%dx%d", w, h), "-frames:v", "1", "-update", "1", out)
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("make image: %v %s", err, b)
 	}

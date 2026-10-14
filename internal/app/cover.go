@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"powerposter/internal/platform"
 	"powerposter/internal/store"
 )
 
@@ -20,14 +21,18 @@ func (a *App) coversDir() string { return filepath.Join(a.Cfg.DataDir, "media", 
 
 // coverURL is the preview image for the post's cover, or "" if none yet.
 func coverURL(p store.Post, targets []TargetView) string {
-	if p.CoverCustom && p.CoverPath != "" {
+	if p.CoverCustom && p.CoverPath != "" && p.Kind != string(platform.KindImage) {
 		return mediaURL("covers", p.CoverPath)
 	}
 	return coverFrameURL(p, targets)
 }
 
 // coverFrameURL previews the video frame at CoverMs (what TikTok always uses).
+// Image posts have no cover: the first image is shown first.
 func coverFrameURL(p store.Post, targets []TargetView) string {
+	if p.Kind == string(platform.KindImage) {
+		return ""
+	}
 	for _, t := range targets {
 		if r := t.Rendition; t.Enabled && r != nil && r.Status == "ready" && len(r.Checksum) >= 12 {
 			return fmt.Sprintf("/media/covers/%d-f%d-%s.jpg", p.ID, p.CoverMs, r.Checksum[:12])
@@ -76,6 +81,9 @@ func (a *App) SetCoverImage(ctx context.Context, id int64, r io.Reader, original
 	p, err := a.editablePost(ctx, id)
 	if err != nil {
 		return PostView{}, err
+	}
+	if p.Kind == string(platform.KindImage) {
+		return PostView{}, invalid("image posts have no cover image; the first image is shown first (reorder the images instead)")
 	}
 	if err := os.MkdirAll(a.coversDir(), 0o755); err != nil {
 		return PostView{}, err

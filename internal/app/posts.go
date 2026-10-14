@@ -202,69 +202,102 @@ func (a *App) UpdateTarget(ctx context.Context, postID int64, platformID string,
 	return a.afterEdit(ctx, postID)
 }
 
-// AttachFile copies (or moves) a local video into the post, replacing the
-// previous one, and starts conversion for every enabled platform.
+// AttachSource is a local file to attach to a post.
+type AttachSource struct {
+	Path string // file to copy (or move)
+	Name string // original file name; defaults to the base name of Path
+	Move bool   // move instead of copy (e.g. an upload in a temp file)
+}
+
+// AttachFile attaches one local file; see AttachFiles.
 func (a *App) AttachFile(ctx context.Context, postID int64, src, originalName string, move bool) (PostView, error) {
+	return a.AttachFiles(ctx, postID, []AttachSource{{Path: src, Name: originalName, Move: move}}, false)
+}
+
+// AttachFiles adds media to a post. A post has either one video or images
+// (several images are posted as a carousel): a video replaces everything,
+// images are appended in the given order and replace a video. With replace,
+// existing images are removed first. Conversion for every enabled platform
+// starts right away.
+func (a *App) AttachFiles(ctx context.Context, postID int64, files []AttachSource, replace bool) (PostView, error) {
 	a.postMu.Lock()
 	defer a.postMu.Unlock()
 
-	if _, err := a.editablePost(ctx, postID); err != nil {
-		if move {
-			os.Remove(src)
+	var added []store.Asset
+	fail := func(err error) (PostView, error) {
+		for _, as := range added {
+			removeAssetFiles(as)
+		}
+		for _, f := range files[len(added):] {
+			if f.Move {
+				os.Remove(f.Path)
+			}
 		}
 		return PostView{}, err
 	}
-	if originalName == "" {
-		originalName = filepath.Base(src)
-	}
-	ext := strings.ToLower(filepath.Ext(originalName))
-	if ext == "" || len(ext) > 6 {
-		ext = ".bin"
-	}
-	dst := filepath.Join(a.originalsDir(), fmt.Sprintf("%d-%s%s", postID, randomHex(6), ext))
-	if move {
-		if err := os.Rename(src, dst); err != nil {
-			return PostView{}, err
-		}
-	} else if err := copyFile(src, dst); err != nil {
-		return PostView{}, fmt.Errorf("copy %s: %w", originalName, err)
-	}
-
-	info, err := a.Media.Probe(ctx, dst)
+	p, err := a.editablePost(ctx, postID)
 	if err != nil {
-		os.Remove(dst)
-		return PostView{}, invalid("%s is not a usable video: %v", originalName, err)
+		return fail(err)
+	}
+	if len(files) == 0 {
+		return fail(invalid("no file given"))
+	}
+	for _, f := range files {
+		as, err := a.importFile(ctx, postID, f)
+		if err != nil {
+			return fail(err)
+		}
+		added = append(added, as)
+	}
+	images := 0
+	for _, as := range added {
+		if as.Info.Image {
+			images++
+		}
+	}
+	if images != len(added) && len(added) > 1 {
+		return fail(invalid("a post has either one video or images, not both: attach a single video, or only images"))
 	}
 
 	old, err := a.Store.ListAssets(ctx, postID)
 	if err != nil {
-		return PostView{}, err
+		return fail(err)
 	}
-	asset := store.Asset{PostID: postID, Path: dst, OriginalName: originalName, Info: info}
-	thumb := strings.TrimSuffix(filepath.Base(dst), ext) + ".jpg"
-	asset.ThumbPath = filepath.Join(a.thumbsDir(), thumb)
-	if err := a.Media.Thumbnail(ctx, dst, asset.ThumbPath, min(1, info.Duration/3)); err != nil {
-		a.Log.Warn("thumbnail", "err", err)
-		asset.ThumbPath = ""
+	kind := platform.KindVideo
+	var keep []store.Asset
+	if images > 0 {
+		kind = platform.KindImage
+		if p.Kind == string(platform.KindImage) && !replace {
+			keep = old
+		}
+		if n, limit := len(keep)+len(added), a.maxImages(); n > limit {
+			return fail(invalid("a post can have at most %d images (it would have %d)", limit, n))
+		}
 	}
-	if err := a.Store.CreateAsset(ctx, &asset); err != nil {
-		return PostView{}, err
+	pos := 0
+	if len(keep) > 0 {
+		pos = keep[len(keep)-1].Position + 1
+	}
+	for i := range added {
+		added[i].Position = pos + i
+		if err := a.Store.CreateAsset(ctx, &added[i]); err != nil {
+			return fail(err)
+		}
 	}
 	for _, o := range old {
-		if err := a.deleteAsset(ctx, o); err != nil {
-			a.Log.Warn("remove previous asset", "asset", o.ID, "err", err)
+		if !slices.ContainsFunc(keep, func(k store.Asset) bool { return k.ID == o.ID }) {
+			if err := a.deleteAsset(ctx, o); err != nil {
+				a.Log.Warn("remove previous media", "asset", o.ID, "err", err)
+			}
 		}
 	}
 
-	p, err := a.Store.GetPost(ctx, postID)
-	if err != nil {
-		return PostView{}, err
-	}
-	if float64(p.CoverMs)/1000 > info.Duration {
+	p.Kind = string(kind)
+	if kind == platform.KindVideo && float64(p.CoverMs)/1000 > added[0].Info.Duration {
 		p.CoverMs = 0
-		if err := a.Store.UpdatePost(ctx, &p); err != nil {
-			return PostView{}, err
-		}
+	}
+	if err := a.Store.UpdatePost(ctx, &p); err != nil {
+		return PostView{}, err
 	}
 	if err := a.ensureRenditions(ctx, postID); err != nil {
 		return PostView{}, err
@@ -272,8 +305,61 @@ func (a *App) AttachFile(ctx context.Context, postID int64, src, originalName st
 	return a.afterEdit(ctx, postID)
 }
 
-// AttachUpload stores an uploaded stream, then attaches it.
-func (a *App) AttachUpload(ctx context.Context, postID int64, r io.Reader, originalName string) (PostView, error) {
+// importFile copies (or moves) a file into the media folder, probes it and
+// renders its thumbnail. The asset is not stored yet.
+func (a *App) importFile(ctx context.Context, postID int64, f AttachSource) (store.Asset, error) {
+	name := f.Name
+	if name == "" {
+		name = filepath.Base(f.Path)
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext == "" || len(ext) > 6 {
+		ext = ".bin"
+	}
+	dst := filepath.Join(a.originalsDir(), fmt.Sprintf("%d-%s%s", postID, randomHex(6), ext))
+	if f.Move {
+		if err := os.Rename(f.Path, dst); err != nil {
+			os.Remove(f.Path)
+			return store.Asset{}, err
+		}
+	} else if err := copyFile(f.Path, dst); err != nil {
+		return store.Asset{}, fmt.Errorf("copy %s: %w", name, err)
+	}
+
+	info, err := a.Media.Probe(ctx, dst)
+	if err != nil {
+		os.Remove(dst)
+		return store.Asset{}, invalid("%s is not a usable video or image: %v", name, err)
+	}
+	as := store.Asset{PostID: postID, Path: dst, OriginalName: name, Info: info}
+	as.ThumbPath = filepath.Join(a.thumbsDir(), strings.TrimSuffix(filepath.Base(dst), ext)+".jpg")
+	at := 0.0
+	if !info.Image {
+		at = min(1, info.Duration/3)
+	}
+	if err := a.Media.Thumbnail(ctx, dst, as.ThumbPath, at); err != nil {
+		a.Log.Warn("thumbnail", "err", err)
+		as.ThumbPath = ""
+	}
+	return as, nil
+}
+
+// maxImages is the most images any platform takes in one post.
+func (a *App) maxImages() int {
+	n := 0
+	for _, ad := range a.Registry.All() {
+		if c := ad.Constraints(platform.KindImage).Image; c != nil && slices.Contains(ad.SupportedKinds(), platform.KindImage) {
+			n = max(n, c.MaxCount)
+		}
+	}
+	if n == 0 {
+		n = 10
+	}
+	return n
+}
+
+// AttachUpload stores an uploaded stream, then attaches it (see AttachFiles).
+func (a *App) AttachUpload(ctx context.Context, postID int64, r io.Reader, originalName string, replace bool) (PostView, error) {
 	tmp, err := os.CreateTemp(a.originalsDir(), "upload-*.part")
 	if err != nil {
 		return PostView{}, err
@@ -286,7 +372,62 @@ func (a *App) AttachUpload(ctx context.Context, postID int64, r io.Reader, origi
 		os.Remove(tmp.Name())
 		return PostView{}, fmt.Errorf("store upload: %w", err)
 	}
-	return a.AttachFile(ctx, postID, tmp.Name(), filepath.Base(originalName), true)
+	return a.AttachFiles(ctx, postID, []AttachSource{{Path: tmp.Name(), Name: filepath.Base(originalName), Move: true}}, replace)
+}
+
+// RemoveMedia removes one image (or the video) from a post.
+func (a *App) RemoveMedia(ctx context.Context, postID, assetID int64) (PostView, error) {
+	a.postMu.Lock()
+	defer a.postMu.Unlock()
+
+	if _, err := a.editablePost(ctx, postID); err != nil {
+		return PostView{}, err
+	}
+	as, err := a.Store.GetAsset(ctx, assetID)
+	if err != nil || as.PostID != postID {
+		return PostView{}, notFound("media %d not found in post %d", assetID, postID)
+	}
+	if err := a.deleteAsset(ctx, as); err != nil {
+		return PostView{}, err
+	}
+	// The first image may have changed, and with it the carousel's aspect ratio.
+	if err := a.ensureRenditions(ctx, postID); err != nil {
+		return PostView{}, err
+	}
+	return a.afterEdit(ctx, postID)
+}
+
+// ReorderMedia sets the order of a post's images. ids must list every image once.
+func (a *App) ReorderMedia(ctx context.Context, postID int64, ids []int64) (PostView, error) {
+	a.postMu.Lock()
+	defer a.postMu.Unlock()
+
+	if _, err := a.editablePost(ctx, postID); err != nil {
+		return PostView{}, err
+	}
+	assets, err := a.Store.ListAssets(ctx, postID)
+	if err != nil {
+		return PostView{}, err
+	}
+	sorted := slices.Clone(ids)
+	slices.Sort(sorted)
+	var have []int64
+	for _, as := range assets {
+		have = append(have, as.ID)
+	}
+	slices.Sort(have)
+	if !slices.Equal(sorted, have) {
+		return PostView{}, invalid("list every media id of post %d exactly once (have %v)", postID, have)
+	}
+	for i, id := range ids {
+		if err := a.Store.SetAssetPosition(ctx, id, i); err != nil {
+			return PostView{}, err
+		}
+	}
+	if err := a.ensureRenditions(ctx, postID); err != nil {
+		return PostView{}, err
+	}
+	return a.afterEdit(ctx, postID)
 }
 
 func (a *App) DeletePost(ctx context.Context, id int64) error {
@@ -394,11 +535,16 @@ func (a *App) deleteAsset(ctx context.Context, as store.Asset) error {
 	for _, r := range rends {
 		a.removeIfUnused(ctx, r.Path)
 	}
+	removeAssetFiles(as)
+	return nil
+}
+
+// removeAssetFiles deletes an asset's original and thumbnail.
+func removeAssetFiles(as store.Asset) {
 	os.Remove(as.Path)
 	if as.ThumbPath != "" {
 		os.Remove(as.ThumbPath)
 	}
-	return nil
 }
 
 func (a *App) platformIDs() []string {

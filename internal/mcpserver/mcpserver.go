@@ -17,18 +17,23 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"powerposter/internal/app"
+	"powerposter/internal/media"
 	"powerposter/internal/platform"
 )
 
-const instructions = `PowerPoster prepares and publishes social media posts (Instagram Reels, TikTok videos, Discord channel posts) for a game studio.
+const instructions = `PowerPoster prepares and publishes social media posts for a game studio: videos (Instagram Reels, TikTok videos, Discord channel posts) and image posts (Instagram image and carousel posts, TikTok photo posts, Discord images).
+
+A post has either one video or images. Several images are posted as a carousel (Instagram up to 10, TikTok up to 35, Discord up to 10 per post). The post type follows the attached media; there is nothing else to set.
 
 Workflow:
-1. list_projects to pick the project (each game/brand is a project with its own brand voice, hashtags and accounts), get_platform_constraints for limits.
+1. list_projects to pick the project (each game/brand is a project with its own brand voice, hashtags and accounts), get_platform_constraints for the video and image limits.
 2. create_post with the project, caption, hashtags and target platforms. Write the caption in that project's brand voice.
-3. attach_media with a video file saved inside the PowerPoster inbox folder (see list_platforms → inboxHostPath). PowerPoster converts it for each platform automatically.
+3. attach_media with files saved inside the PowerPoster inbox folder (see list_platforms → inboxHostPath): one video, or one or more images (JPEG, PNG or WebP) in the order they should appear. More images can be added later; replace=true starts over. remove_media and reorder_media change the images. PowerPoster converts everything for each platform automatically (videos to 9:16; images to each platform's format and aspect ratio, using the post's aspect strategy).
 4. validate_post until "ready" is true (conversion runs in the background; poll every few seconds).
 5. Give the user the review link (get_review_link). The user approves on the review page.
 6. publish_post only works after the user approved the post, and only if they enabled "Allow Claude to publish" in Settings.
+
+Image posts on Instagram and TikTok need the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL), because both platforms download images from a public link; validate_post reports it when it is missing. Discord needs no tunnel.
 
 Never claim a post was published unless get_publish_status reports "published".`
 
@@ -39,13 +44,15 @@ func New(a *app.App) *mcp.Server {
 
 	mcp.AddTool(s, &mcp.Tool{Name: "list_projects", Description: "List projects (one per game or brand) with their brand profile (game name, link, default hashtags, tone notes), default platforms and connected accounts. Pass a project's slug to create_post."}, t.listProjects)
 	mcp.AddTool(s, &mcp.Tool{Name: "list_platforms", Description: "List supported platforms with connection status for a project, the inbox folder for attach_media, and each platform's options schema."}, t.listPlatforms)
-	mcp.AddTool(s, &mcp.Tool{Name: "get_platform_constraints", Description: "Media and caption limits for a platform (resolution, fps, duration, size, caption length). Use it to produce fitting media up front."}, t.getConstraints)
-	mcp.AddTool(s, &mcp.Tool{Name: "create_post", Description: "Create a draft post in a project. Hashtags default to the project's default hashtags; platforms default to the project's default platforms."}, t.createPost)
-	mcp.AddTool(s, &mcp.Tool{Name: "attach_media", Description: "Attach a video file to a post (replaces any existing video). The path must be inside the PowerPoster inbox folder. Conversion for each platform starts automatically."}, t.attachMedia)
-	mcp.AddTool(s, &mcp.Tool{Name: "upload_media", Description: "Attach a small video (max 50 MB) by sending its content as base64. Prefer attach_media for files in the inbox."}, t.uploadMedia)
-	mcp.AddTool(s, &mcp.Tool{Name: "set_cover_image", Description: "Use an image from the inbox folder as custom cover (Instagram; converted to 1080x1920). TikTok always uses the video frame at cover_ms. Pass an empty path to go back to the video frame."}, t.setCover)
-	mcp.AddTool(s, &mcp.Tool{Name: "duplicate_post", Description: "Copy a post (text, options, cover, video incl. conversions) into a new draft. Only platforms not yet live on the original are enabled. Use it to re-post or change a post that was already (partly) published."}, t.duplicatePost)
-	mcp.AddTool(s, &mcp.Tool{Name: "update_post", Description: "Edit a draft: title, caption, hashtags, aspect strategy (blur|crop|pad) or cover frame time. Any change after approval sends the post back to draft."}, t.updatePost)
+	mcp.AddTool(s, &mcp.Tool{Name: "get_platform_constraints", Description: "Media and caption limits of a platform, for video posts (resolution, fps, duration, size) and image posts (formats, aspect ratio range, size, images per post), plus caption limits for each. Use it to produce fitting media up front."}, t.getConstraints)
+	mcp.AddTool(s, &mcp.Tool{Name: "create_post", Description: "Create a draft post in a project. Hashtags default to the project's default hashtags; platforms default to the project's default platforms. Whether it becomes a video or an image post depends on the media you attach."}, t.createPost)
+	mcp.AddTool(s, &mcp.Tool{Name: "attach_media", Description: "Attach media from the PowerPoster inbox folder: one video (replaces everything attached before), or one or more images (JPEG, PNG, WebP) that are added after the post's existing images in the given order and replace a video. Pass replace=true to drop the existing images first. Several images become a carousel. Conversion for each platform starts automatically."}, t.attachMedia)
+	mcp.AddTool(s, &mcp.Tool{Name: "upload_media", Description: "Attach a small video or image (max 50 MB) by sending its content as base64; same rules as attach_media. Prefer attach_media for files in the inbox."}, t.uploadMedia)
+	mcp.AddTool(s, &mcp.Tool{Name: "remove_media", Description: "Remove one image (or the video) from a post. Media ids are listed in the post's \"media\"."}, t.removeMedia)
+	mcp.AddTool(s, &mcp.Tool{Name: "reorder_media", Description: "Set the order of a post's images (the first one is shown first; on Instagram it also sets the carousel's aspect ratio). List every media id exactly once."}, t.reorderMedia)
+	mcp.AddTool(s, &mcp.Tool{Name: "set_cover_image", Description: "Video posts only: use an image from the inbox folder as custom cover (Instagram; converted to 1080x1920). TikTok always uses the video frame at cover_ms. Pass an empty path to go back to the video frame. Image posts have no cover; their first image is shown first."}, t.setCover)
+	mcp.AddTool(s, &mcp.Tool{Name: "duplicate_post", Description: "Copy a post (text, options, cover, video or images incl. conversions) into a new draft. Only platforms not yet live on the original are enabled. Use it to re-post or change a post that was already (partly) published."}, t.duplicatePost)
+	mcp.AddTool(s, &mcp.Tool{Name: "update_post", Description: "Edit a draft: title, caption, hashtags, aspect strategy (blur|crop|pad: how media that doesn't fit a platform's aspect ratio is fitted) or cover frame time (videos). Any change after approval sends the post back to draft."}, t.updatePost)
 	mcp.AddTool(s, &mcp.Tool{Name: "set_target_options", Description: "Per-platform settings: enable/disable a platform, caption or hashtag overrides, and platform options (see the options schema in list_platforms)."}, t.setTarget)
 	mcp.AddTool(s, &mcp.Tool{Name: "validate_post", Description: "Validation result per platform: errors, warnings (incl. automatic fixes like downscaling), conversion progress, and whether the post is ready for review."}, t.validatePost)
 	mcp.AddTool(s, &mcp.Tool{Name: "get_post", Description: "Full state of a post."}, t.getPost)
@@ -76,7 +83,7 @@ func New(a *app.App) *mcp.Server {
 		uri := fmt.Sprintf("powerposter://platforms/%s/constraints", ad.ID())
 		s.AddResource(&mcp.Resource{URI: uri, Name: string(ad.ID()) + "-constraints", Title: ad.DisplayName() + " limits", MIMEType: "application/json"},
 			func(ctx context.Context, req *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
-				return jsonResource(uri, ad.Constraints(platform.KindVideo))
+				return jsonResource(uri, constraintsByKind(ad))
 			})
 	}
 	return s
@@ -124,14 +131,27 @@ type createPostIn struct {
 }
 
 type attachIn struct {
-	PostID int64  `json:"post_id" jsonschema:"the post id"`
-	Path   string `json:"path" jsonschema:"absolute path of the video inside the inbox folder"`
+	PostID  int64    `json:"post_id" jsonschema:"the post id"`
+	Path    string   `json:"path,omitempty" jsonschema:"absolute path of a video or image inside the inbox folder"`
+	Paths   []string `json:"paths,omitempty" jsonschema:"several images inside the inbox folder, in carousel order (instead of path)"`
+	Replace bool     `json:"replace,omitempty" jsonschema:"remove the post's existing images first"`
 }
 
 type uploadIn struct {
 	PostID        int64  `json:"post_id" jsonschema:"the post id"`
-	Filename      string `json:"filename" jsonschema:"file name including extension, e.g. reel.mp4"`
+	Filename      string `json:"filename" jsonschema:"file name including extension, e.g. reel.mp4 or shot.png"`
 	ContentBase64 string `json:"content_base64" jsonschema:"file content, base64 encoded"`
+	Replace       bool   `json:"replace,omitempty" jsonschema:"remove the post's existing images first"`
+}
+
+type mediaIn struct {
+	PostID  int64 `json:"post_id" jsonschema:"the post id"`
+	MediaID int64 `json:"media_id" jsonschema:"id from the post's media list"`
+}
+
+type reorderIn struct {
+	PostID   int64   `json:"post_id" jsonschema:"the post id"`
+	MediaIDs []int64 `json:"media_ids" jsonschema:"every media id of the post, in the new order"`
 }
 
 type coverIn struct {
@@ -248,10 +268,21 @@ func (t tools) getConstraints(ctx context.Context, _ *mcp.CallToolRequest, in pl
 	}
 	return nil, map[string]any{
 		"platform":      ad.ID(),
-		"constraints":   ad.Constraints(platform.KindVideo),
+		"constraints":   constraintsByKind(ad),
 		"optionsSchema": ad.OptionsSchema(),
-		"note":          "PowerPoster converts videos to targetWidth x targetHeight automatically; durations outside the limits must be trimmed before attaching.",
+		"note": "PowerPoster converts videos to targetWidth x targetHeight automatically; durations outside the limits must be trimmed before attaching. " +
+			"Images are converted to an accepted format and scaled into maxWidth x maxHeight; images outside the aspect ratio range are fitted with the post's aspect strategy. " +
+			"needsPublicUrl means the platform downloads the images itself, so publishing needs the tunnel.",
 	}, nil
+}
+
+// constraintsByKind lists a platform's limits per post kind it supports.
+func constraintsByKind(ad platform.Adapter) map[platform.PostKind]platform.Constraints {
+	out := map[platform.PostKind]platform.Constraints{}
+	for _, k := range ad.SupportedKinds() {
+		out[k] = ad.Constraints(k)
+	}
+	return out
 }
 
 func (t tools) createPost(ctx context.Context, _ *mcp.CallToolRequest, in createPostIn) (*mcp.CallToolResult, any, error) {
@@ -267,12 +298,22 @@ func (t tools) createPost(ctx context.Context, _ *mcp.CallToolRequest, in create
 }
 
 func (t tools) attachMedia(ctx context.Context, _ *mcp.CallToolRequest, in attachIn) (*mcp.CallToolResult, any, error) {
-	local, err := t.a.ResolveInboxPath(in.Path)
-	if err != nil {
-		return nil, nil, err
+	paths := in.Paths
+	if strings.TrimSpace(in.Path) != "" {
+		paths = append([]string{in.Path}, paths...)
 	}
-	v, err := t.a.AttachFile(ctx, in.PostID, local, "", false)
-	return post(v, err)
+	if len(paths) == 0 {
+		return nil, nil, fmt.Errorf("pass path (one file) or paths (several images)")
+	}
+	var files []app.AttachSource
+	for _, p := range paths {
+		local, err := t.a.ResolveInboxPath(p)
+		if err != nil {
+			return nil, nil, err
+		}
+		files = append(files, app.AttachSource{Path: local})
+	}
+	return post(t.a.AttachFiles(ctx, in.PostID, files, in.Replace))
 }
 
 const maxUpload = 50 << 20
@@ -285,8 +326,15 @@ func (t tools) uploadMedia(ctx context.Context, _ *mcp.CallToolRequest, in uploa
 	if err != nil {
 		return nil, nil, fmt.Errorf("content_base64 is not valid base64: %v", err)
 	}
-	v, err := t.a.AttachUpload(ctx, in.PostID, bytes.NewReader(data), in.Filename)
-	return post(v, err)
+	return post(t.a.AttachUpload(ctx, in.PostID, bytes.NewReader(data), in.Filename, in.Replace))
+}
+
+func (t tools) removeMedia(ctx context.Context, _ *mcp.CallToolRequest, in mediaIn) (*mcp.CallToolResult, any, error) {
+	return post(t.a.RemoveMedia(ctx, in.PostID, in.MediaID))
+}
+
+func (t tools) reorderMedia(ctx context.Context, _ *mcp.CallToolRequest, in reorderIn) (*mcp.CallToolResult, any, error) {
+	return post(t.a.ReorderMedia(ctx, in.PostID, in.MediaIDs))
 }
 
 func (t tools) setCover(ctx context.Context, _ *mcp.CallToolRequest, in coverIn) (*mcp.CallToolResult, any, error) {
@@ -459,7 +507,8 @@ type targetOut struct {
 	FinalCaption string          `json:"finalCaption,omitempty"`
 	CaptionChars string          `json:"captionChars,omitempty"`
 	Options      json.RawMessage `json:"options,omitempty"`
-	Rendition    *renditionOut   `json:"rendition,omitempty"`
+	Rendition    *renditionOut   `json:"rendition,omitempty"` // video posts
+	Images       []renditionOut  `json:"images,omitempty"`    // image posts, in order
 	Issues       []issueOut      `json:"issues,omitempty"`
 	Permalink    string          `json:"permalink,omitempty"`
 	Error        string          `json:"error,omitempty"`
@@ -469,12 +518,13 @@ type postOut struct {
 	ID             int64       `json:"id"`
 	Project        string      `json:"project"`
 	Title          string      `json:"title"`
+	Kind           string      `json:"kind"` // video | image (follows the attached media)
 	Status         string      `json:"status"`
 	Caption        string      `json:"caption"`
 	Hashtags       []string    `json:"hashtags"`
 	AspectStrategy string      `json:"aspectStrategy"`
-	CoverMs        int64       `json:"coverMs"`
-	Video          *videoOut   `json:"video,omitempty"`
+	CoverMs        int64       `json:"coverMs,omitempty"`
+	Media          []mediaOut  `json:"media"`
 	Ready          bool        `json:"ready"`
 	ApprovalValid  bool        `json:"approvalValid"`
 	CanPublish     bool        `json:"canPublish"`
@@ -482,23 +532,34 @@ type postOut struct {
 	ReviewURL      string      `json:"reviewUrl"`
 }
 
-type videoOut struct {
+type mediaOut struct {
+	ID       int64   `json:"id"` // for remove_media / reorder_media
 	Name     string  `json:"name"`
+	Type     string  `json:"type"`             // video | image
+	Format   string  `json:"format,omitempty"` // images: jpeg, png, webp
 	Width    int     `json:"width"`
 	Height   int     `json:"height"`
-	FPS      float64 `json:"fps"`
-	Duration float64 `json:"durationSec"`
+	FPS      float64 `json:"fps,omitempty"`
+	Duration float64 `json:"durationSec,omitempty"`
 }
 
 func summarize(v app.PostView) postOut {
 	o := postOut{
-		ID: v.ID, Project: v.Project.Slug, Title: v.Title, Status: v.Status, Caption: v.Caption, Hashtags: v.Hashtags,
-		AspectStrategy: v.AspectStrategy, CoverMs: v.CoverMs, Ready: v.Ready, ApprovalValid: v.ApprovalValid,
-		CanPublish: v.CanPublish, ReviewURL: v.ReviewURL, Targets: []targetOut{},
+		ID: v.ID, Project: v.Project.Slug, Title: v.Title, Kind: v.Kind, Status: v.Status, Caption: v.Caption, Hashtags: v.Hashtags,
+		AspectStrategy: v.AspectStrategy, Ready: v.Ready, ApprovalValid: v.ApprovalValid,
+		CanPublish: v.CanPublish, ReviewURL: v.ReviewURL, Media: []mediaOut{}, Targets: []targetOut{},
 	}
-	if v.Asset != nil {
-		i := v.Asset.Info
-		o.Video = &videoOut{v.Asset.OriginalName, i.Width, i.Height, i.FPS, i.Duration}
+	image := v.Kind == string(platform.KindImage)
+	if !image {
+		o.CoverMs = v.CoverMs
+	}
+	for _, as := range v.Assets {
+		i := as.Info
+		m := mediaOut{ID: as.ID, Name: as.OriginalName, Type: "video", Width: i.Width, Height: i.Height, FPS: i.FPS, Duration: i.Duration}
+		if i.Image {
+			m.Type, m.Format = "image", media.ImageFormat(i)
+		}
+		o.Media = append(o.Media, m)
 	}
 	for _, t := range v.Targets {
 		to := targetOut{Platform: t.Platform, Enabled: t.Enabled}
@@ -509,17 +570,21 @@ func summarize(v app.PostView) postOut {
 			to.Options = t.Options
 			to.Permalink = t.Permalink
 			to.Error = t.Error
-			if r := t.Rendition; r != nil {
-				ro := &renditionOut{Status: r.Status, Progress: int(r.Progress * 100), Fixes: r.Plan.Fixes, Error: r.Error}
+			for _, r := range t.Renditions {
+				ro := renditionOut{Status: r.Status, Progress: int(r.Progress * 100), Fixes: r.Plan.Fixes, Error: r.Error}
 				if r.Info != nil {
 					ro.Width, ro.Height, ro.FPS = r.Info.Width, r.Info.Height, r.Info.FPS
 					ro.SizeMB = float64(r.Info.Size*10/(1<<20)) / 10
 				}
-				to.Rendition = ro
+				if image {
+					to.Images = append(to.Images, ro)
+				} else if to.Rendition == nil {
+					to.Rendition = &ro
+				}
 			}
 			for _, is := range t.Issues {
 				if is.Code == "AUTO_FIXED" {
-					continue // listed under rendition.fixes
+					continue // listed under rendition.fixes / images[].fixes
 				}
 				to.Issues = append(to.Issues, issueOut{string(is.Severity), is.Message, is.AutoFix})
 			}

@@ -27,7 +27,7 @@ function PostList({ project }: { project: Project }) {
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { data: posts, error: loadError } = usePolling(() => api.posts(project.id), 3000, (d) =>
-    (d ?? []).some((p) => p.status === 'publishing' || p.targets.some((t) => t.rendition?.status === 'processing')),
+    (d ?? []).some((p) => p.status === 'publishing' || p.targets.some((t) => t.renditions.some((r) => r.status === 'processing'))),
   )
 
   const create = async () => {
@@ -108,7 +108,10 @@ function PostList({ project }: { project: Project }) {
             <tbody>
               {shown.map((p) => (
                 <tr key={p.id}>
-                  <td className="thumb-cell">{p.asset?.thumbUrl ? <img src={p.asset.thumbUrl} alt="" className="thumb" /> : <div className="thumb empty-thumb" />}</td>
+                  <td className="thumb-cell">
+                    {p.asset?.thumbUrl ? <img src={p.asset.thumbUrl} alt="" className="thumb" /> : <div className="thumb empty-thumb" />}
+                    {p.assets.length > 1 && <span className="thumb-count" title={`${p.assets.length} images`}>{p.assets.length}</span>}
+                  </td>
                   <td>
                     <Link to={`/posts/${p.id}`}>{p.title}</Link>
                     {p.createdBy === 'mcp' && <small className="by-claude">by Claude</small>}

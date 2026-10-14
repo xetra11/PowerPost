@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { api, describeMedia, type Attempt, type Platform, type Post, type Stats, type Target } from '../api'
+import { api, describeImages, describeMedia, isConverting, type Attempt, type Platform, type Post, type Stats, type Target } from '../api'
 import { CopyButton, ErrorBanner, IssueList, StatusBadge } from '../components/common'
 import { PhonePreview, type PreviewMode } from '../components/PhonePreview'
 import { usePolling } from '../usePolling'
@@ -9,7 +9,8 @@ import { useFollowProject } from '../project'
 const busy = (p: Post | null) =>
   !!p &&
   (p.status === 'publishing' ||
-    p.targets.some((t) => t.enabled && (t.status === 'queued' || t.status === 'publishing' || t.rendition?.status === 'pending' || t.rendition?.status === 'processing')))
+    p.targets.some((t) => t.enabled && (t.status === 'queued' || t.status === 'publishing')) ||
+    isConverting(p))
 
 export default function ReviewPage() {
   const id = Number(useParams().id)
@@ -125,7 +126,7 @@ export default function ReviewPage() {
               ['live', 'Live post'],
               ['simulation', 'App preview'],
               ['safezones', 'Safe zones'],
-              ['plain', 'Video only'],
+              ['plain', 'Media only'],
             ] as const
           ).map(([m, label]) => (
             <button key={m} className={mode === m ? 'small' : 'small secondary outline'} onClick={() => setMode(m)}>
@@ -244,6 +245,8 @@ function ReviewCard({
   onRefreshStats: () => void
 }) {
   const r = t.rendition
+  const images = post.kind === 'image'
+  const imagesReady = images && t.renditions.length === post.assets.length && t.renditions.every((x) => x.status === 'ready')
   const options = platform ? Object.entries(platform.optionsSchema.properties) : []
   const inbox = t.options.mode === 'inbox'
   return (
@@ -277,15 +280,28 @@ function ReviewCard({
       ) : (
       <PhonePreview
         platform={t.platform}
-        videoUrl={r?.status === 'ready' ? r.url : null}
-        placeholder={r?.status === 'failed' ? 'Conversion failed' : r ? `Converting… ${Math.round(r.progress * 100)}%` : post.asset ? 'Waiting…' : 'No video'}
+        videoUrl={!images && r?.status === 'ready' ? r.url : null}
+        images={images && imagesReady ? t.renditions.map((x) => x.url) : null}
+        placeholder={
+          t.renditions.some((x) => x.status === 'failed')
+            ? 'Conversion failed'
+            : images && t.renditions.length > 0
+              ? `Converting… ${t.renditions.filter((x) => x.status === 'ready').length}/${post.assets.length}`
+              : r
+                ? `Converting… ${Math.round(r.progress * 100)}%`
+                : post.asset
+                  ? 'Waiting…'
+                  : 'No media'
+        }
         caption={t.finalCaption}
         username={handle ?? platform?.accountName ?? ''}
         label={disclosureLabel(t)}
         mode={mode === 'live' ? 'simulation' : mode}
       />
       )}
-      {r?.info && <small className="muted">{describeMedia(r.info)}</small>}
+      {images
+        ? imagesReady && <small className="muted">{describeImages(t.renditions.flatMap((x) => (x.info ? [x.info] : [])))}</small>
+        : r?.info && <small className="muted">{describeMedia(r.info)}</small>}
       {t.platform !== 'discord' && (t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl) && (
         <div className="cover-mini">
           <img src={t.platform === 'instagram' ? post.coverUrl : post.coverFrameUrl} alt="" />

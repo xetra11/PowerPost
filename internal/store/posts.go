@@ -119,46 +119,16 @@ type Asset struct {
 	OriginalName string     `json:"originalName"`
 	ThumbPath    string     `json:"-"`
 	Info         media.Info `json:"info"`
+	Position     int        `json:"position"` // order within an image post
 	CreatedAt    time.Time  `json:"createdAt"`
 }
 
-func (s *Store) CreateAsset(ctx context.Context, a *Asset) error {
-	ts := now()
-	res, err := s.db.ExecContext(ctx, `INSERT INTO assets (post_id, path, original_name, thumb_path, info, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		a.PostID, a.Path, a.OriginalName, a.ThumbPath, mustJSON(a.Info), ts)
-	if err != nil {
-		return err
-	}
-	a.ID, _ = res.LastInsertId()
-	a.CreatedAt = parseTime(ts)
-	return nil
-}
+const assetCols = `id, post_id, path, original_name, thumb_path, info, position, created_at`
 
-func (s *Store) ListAssets(ctx context.Context, postID int64) ([]Asset, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, post_id, path, original_name, thumb_path, info, created_at FROM assets WHERE post_id = ? ORDER BY id`, postID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Asset{}
-	for rows.Next() {
-		var a Asset
-		var info, created string
-		if err := rows.Scan(&a.ID, &a.PostID, &a.Path, &a.OriginalName, &a.ThumbPath, &info, &created); err != nil {
-			return nil, err
-		}
-		_ = json.Unmarshal([]byte(info), &a.Info)
-		a.CreatedAt = parseTime(created)
-		out = append(out, a)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) GetAsset(ctx context.Context, id int64) (Asset, error) {
+func scanAsset(row interface{ Scan(...any) error }) (Asset, error) {
 	var a Asset
 	var info, created string
-	err := s.db.QueryRowContext(ctx, `SELECT id, post_id, path, original_name, thumb_path, info, created_at FROM assets WHERE id = ?`, id).
-		Scan(&a.ID, &a.PostID, &a.Path, &a.OriginalName, &a.ThumbPath, &info, &created)
+	err := row.Scan(&a.ID, &a.PostID, &a.Path, &a.OriginalName, &a.ThumbPath, &info, &a.Position, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -168,6 +138,45 @@ func (s *Store) GetAsset(ctx context.Context, id int64) (Asset, error) {
 	_ = json.Unmarshal([]byte(info), &a.Info)
 	a.CreatedAt = parseTime(created)
 	return a, nil
+}
+
+func (s *Store) CreateAsset(ctx context.Context, a *Asset) error {
+	ts := now()
+	res, err := s.db.ExecContext(ctx, `INSERT INTO assets (post_id, path, original_name, thumb_path, info, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		a.PostID, a.Path, a.OriginalName, a.ThumbPath, mustJSON(a.Info), a.Position, ts)
+	if err != nil {
+		return err
+	}
+	a.ID, _ = res.LastInsertId()
+	a.CreatedAt = parseTime(ts)
+	return nil
+}
+
+// ListAssets returns a post's media in order.
+func (s *Store) ListAssets(ctx context.Context, postID int64) ([]Asset, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+assetCols+` FROM assets WHERE post_id = ? ORDER BY position, id`, postID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Asset{}
+	for rows.Next() {
+		a, err := scanAsset(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetAsset(ctx context.Context, id int64) (Asset, error) {
+	return scanAsset(s.db.QueryRowContext(ctx, `SELECT `+assetCols+` FROM assets WHERE id = ?`, id))
+}
+
+func (s *Store) SetAssetPosition(ctx context.Context, id int64, position int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE assets SET position = ? WHERE id = ?`, position, id)
+	return err
 }
 
 func (s *Store) DeleteAsset(ctx context.Context, id int64) error {

@@ -76,12 +76,14 @@ func (a *App) DuplicatePost(ctx context.Context, id int64) (PostView, error) {
 		}
 	}
 
-	if len(assets) > 0 {
-		if err := a.copyAsset(ctx, assets[0], p.ID); err != nil {
+	for _, as := range assets {
+		if err := a.copyAsset(ctx, as, p.ID); err != nil {
 			a.deletePostFiles(ctx, p.ID)
 			_ = a.Store.DeletePost(ctx, p.ID)
-			return PostView{}, fmt.Errorf("copy video: %w", err)
+			return PostView{}, fmt.Errorf("copy media: %w", err)
 		}
+	}
+	if len(assets) > 0 {
 		if err := a.ensureRenditions(ctx, p.ID); err != nil {
 			return PostView{}, err
 		}
@@ -92,7 +94,7 @@ func (a *App) DuplicatePost(ctx context.Context, id int64) (PostView, error) {
 // copyAsset copies the video, thumbnail and ready renditions to a new post.
 func (a *App) copyAsset(ctx context.Context, as store.Asset, postID int64) error {
 	ext := filepath.Ext(as.Path)
-	dst := store.Asset{PostID: postID, OriginalName: as.OriginalName, Info: as.Info,
+	dst := store.Asset{PostID: postID, OriginalName: as.OriginalName, Info: as.Info, Position: as.Position,
 		Path: filepath.Join(a.originalsDir(), fmt.Sprintf("%d-%s%s", postID, randomHex(6), ext))}
 	if err := copyFile(as.Path, dst.Path); err != nil {
 		return err
@@ -121,7 +123,7 @@ func (a *App) copyAsset(ctx context.Context, as store.Asset, postID int64) error
 		}
 		newPath, ok := copied[r.Path]
 		if !ok {
-			newPath = filepath.Join(a.renditionsDir(), fmt.Sprintf("%d-%s.mp4", dst.ID, r.ProfileHash[:16]))
+			newPath = filepath.Join(a.renditionsDir(), fmt.Sprintf("%d-%s%s", dst.ID, r.ProfileHash[:16], r.Plan.Ext()))
 			if err := copyFile(r.Path, newPath); err != nil {
 				continue
 			}

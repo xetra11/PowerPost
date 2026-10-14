@@ -1,10 +1,11 @@
 # PowerPoster
 
-Write **one post**, let PowerPoster convert the video for every platform, **review** exactly what will be uploaded, then **publish** to Instagram Reels, TikTok and Discord. Claude can prepare posts for you through **MCP**.
+Write **one post** with a video or images, let PowerPoster convert it for every platform, **review** exactly what will be uploaded, then **publish** to Instagram (Reels, image and carousel posts), TikTok (videos and photo posts) and Discord. Claude can prepare posts for you through **MCP**.
 
 - **One post, many platforms** — shared caption and hashtags, with per-platform overrides and options.
 - **Projects** — one per game or brand, each with its own brand profile, defaults for new posts and platform accounts. Switch projects in the header.
 - **Automatic conversion** — 4K/120 fps gameplay becomes 1080×1920 H.264 at ≤60 fps with a blurred background, crop, or black bars. Platforms that need the same file share one encode.
+- **Image posts** — one image, or several as a carousel. Each image is converted to the format and aspect ratio every platform accepts (e.g. JPEG between 4:5 and 1.91:1 for Instagram), PNGs stay lossless where the platform takes them.
 - **Draft → Review → Publish** — approval is tied to the exact content. Change anything afterwards and the post goes back to draft.
 - **Claude integration** — an MCP server lets Claude create drafts, attach videos and check them. By default only you can publish.
 - **Pluggable platforms** — each platform is one Go package (`internal/platform/<name>`).
@@ -28,7 +29,7 @@ docker compose up -d --build
 
 Open **http://127.0.0.1:4000**.
 
-That's all you need to create posts, upload videos, watch them get converted and review them. To actually publish, connect your accounts (see [Connecting platforms](#connecting-platforms)).
+That's all you need to create posts, upload videos or images, watch them get converted and review them. To actually publish, connect your accounts (see [Connecting platforms](#connecting-platforms)).
 
 Useful commands:
 
@@ -95,15 +96,15 @@ The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip thos
 ## How it works
 
 ```
- Draft ──(video converted, no errors)──► Approve ──► Publish ──► Published
+ Draft ──(media converted, no errors)──► Approve ──► Publish ──► Published
    ▲                                          │                     (per platform)
    └──────────── any change after approval ───┘          └──► Failed → Retry
 ```
 
 1. **Create a post.** Write the caption and hashtags, then pick the platforms.
-2. **Add a video.** It's converted for each platform right away:
+2. **Add a video or images.** A post has either one video or images; adding a video replaces images and the other way round. It's converted for each platform right away:
 
-   | Problem | What PowerPoster does |
+   | Video problem | What PowerPoster does |
    |---|---|
    | 4K / 1440p | Scales to 1080×1920 |
    | 16:9 gameplay for a 9:16 reel | Blurred background (default), center crop, or black bars |
@@ -114,9 +115,21 @@ The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip thos
    | Slow-start MP4 | Moves the index to the front (`+faststart`) |
    | Too long | **Error**: trim the video yourself, PowerPoster won't cut your content |
 
-3. **Pick a cover.** Choose a frame of the video (used by Instagram and TikTok), or upload an image. Instagram uses the image (needs the tunnel); TikTok's API only accepts a video frame.
-4. **Review.** Phone-sized previews play the converted files, with an optional safe-zone overlay. You see the final caption for each platform, every automatic fix, and any remaining problems.
-5. **Approve.** This locks in the content. Any change afterwards (caption, options, video) sends the post back to draft. The internal title doesn't count.
+   **Images** (JPEG, PNG or WebP) are added in order; several images become a carousel. Reorder or remove them in the editor. Per platform:
+
+   | | Instagram | TikTok (photo post) | Discord |
+   |---|---|---|---|
+   | Images per post | 1–10 | 1–35 | 1–10 |
+   | Format | JPEG | JPEG or WebP | JPEG, PNG or WebP (PNG stays lossless) |
+   | Size | 1080 px wide | fits 1080×1920 | fits 4096×4096 |
+   | Aspect ratio | 4:5 to 1.91:1; every carousel image takes the first one's | any | any |
+   | Upload | downloads from a public link (needs the tunnel) | downloads from a public link (needs the tunnel and a verified domain) | direct upload, up to `DISCORD_MAX_UPLOAD_MB` per message |
+
+   Images outside a platform's aspect ratio are fitted with the same choice as videos: blurred background (default), crop, or black bars. The first image is the one shown first, so put the strongest one first.
+
+3. **Pick a cover** (videos only). Choose a frame of the video (used by Instagram and TikTok), or upload an image. Instagram uses the image (needs the tunnel); TikTok's API only accepts a video frame. Image posts have no separate cover: the first image is it.
+4. **Review.** Phone-sized previews play the converted files (image posts as a swipeable carousel), with an optional safe-zone overlay. You see the final caption for each platform, every automatic fix, and any remaining problems.
+5. **Approve.** This locks in the content. Any change afterwards (caption, options, video, images or their order) sends the post back to draft. The internal title doesn't count.
 6. **Publish** each platform on its own card, or all at once. Uploads run in the background. Each platform shows its progress, the link to the live post, or an error with a **Retry** button. If you delete an Instagram post in the app, the review page notices it (status *Removed*); you can then edit the post and publish it again.
 
 ---
@@ -147,23 +160,28 @@ Then ask, for example:
 
 > Make a 30-second reel for donnervolk-online from `inbox/raid.mp4` for Instagram and TikTok, write an English caption in the project's brand voice and give me the review link.
 
+> Post the three screenshots `inbox/biome-1.png` to `biome-3.png` as a carousel on Instagram and Discord, with a short caption about the new biome.
+
 | Tool | What it does |
 |---|---|
 | `list_projects` | Shows the projects with brand profile, default platforms and connected accounts |
 | `list_platforms` | Shows platforms, a project's connection status, option schemas and the inbox folder |
-| `get_platform_constraints` | Returns resolution, fps, duration, size and caption limits |
-| `create_post` | Creates a draft in a project (its hashtags and default platforms apply). `project` can be left out while there is only one project |
-| `attach_media` | Attaches a video by path. The path **must be inside the inbox folder** |
-| `upload_media` | Sends a small file (≤ 50 MB) as base64, for files outside the inbox |
+| `get_platform_constraints` | Returns the limits for video posts (resolution, fps, duration, size) and image posts (formats, aspect ratio, size, images per post), plus caption limits |
+| `create_post` | Creates a draft in a project (its hashtags and default platforms apply). `project` can be left out while there is only one project. Whether it's a video or an image post follows from the attached media |
+| `attach_media` | Attaches one video, or one or more images (`paths`, in carousel order), by path. The paths **must be inside the inbox folder**. Images are added to the existing ones unless `replace` is set |
+| `upload_media` | Sends a small video or image (≤ 50 MB) as base64, for files outside the inbox |
+| `remove_media` / `reorder_media` | Remove an image, or set the order of the images |
 | `update_post` / `set_target_options` | Edit caption, hashtags, fill mode, cover frame and per-platform settings |
+| `set_cover_image` | Custom cover image for video posts (Instagram) |
+| `duplicate_post` | Copies a post (with its media and conversions) into a new draft |
 | `validate_post` | Returns errors, warnings, automatic fixes, conversion progress and whether the post is ready |
 | `get_post` / `list_posts` / `get_review_link` | Read the state of posts |
 | `publish_post` | Publishes **approved** posts only, and only if you enabled it (see below) |
-| `get_publish_status` | Shows progress, links and errors per platform |
+| `get_publish_status` / `get_post_stats` | Shows progress, links and errors per platform; likes, comments and views of published posts |
 
-Resources: `powerposter://brand` (game name, link, hashtags, tone notes of every project) and `powerposter://platforms/<id>/constraints`.
+Resources: `powerposter://brand` (game name, link, hashtags, tone notes of every project) and `powerposter://platforms/<id>/constraints` (video and image limits).
 
-**Inbox folder:** Claude passes paths as it sees them on your machine (`C:\…\power-poster\inbox\clip.mp4`), and PowerPoster maps them to its own view (`/inbox/clip.mp4` in Docker). Point `INBOX_HOST_PATH` at the folder where your video tools already save their output, and nothing needs copying.
+**Inbox folder:** Claude passes paths as it sees them on your machine (`C:\…\power-poster\inbox\clip.mp4`), and PowerPoster maps them to its own view (`/inbox/clip.mp4` in Docker). Point `INBOX_HOST_PATH` at the folder where your video and image tools already save their output, and nothing needs copying.
 
 **Publishing from Claude** is off by default: Claude prepares the post and you approve and publish it on the review page. Under *Settings → Claude (MCP)* you can allow Claude to publish posts **you have approved**. Claude can never approve a post itself.
 
@@ -209,6 +227,8 @@ Requires an Instagram **Professional** account (Business or Creator). No Faceboo
 
 **Quickest way, no tunnel needed:** in your Meta app go to *Instagram → API setup with Instagram login → Generate access tokens*, add your Instagram account (it must accept the tester invite), click *Generate token*, and paste it in PowerPoster under *Settings → Instagram → Or paste an access token*. The token lasts 60 days and is refreshed automatically while PowerPoster is running.
 
+**Image posts** (single images and carousels) always need the tunnel, whichever way you connect: Instagram has no upload for images and downloads them from a public link.
+
 **Or with OAuth (Connect button):**
 
 1. Go to [developers.facebook.com](https://developers.facebook.com/apps) → *Create app* → pick the Instagram use case that offers the **Instagram API with Instagram Login** (dashboard names change from time to time).
@@ -235,6 +255,7 @@ Things to know about TikTok:
   - **Direct**: posts right away. Until TikTok audits your app, direct posts are **private** (and need a private account). Apply for the audit in the developer portal to post publicly.
 - **Required settings:** TikTok requires an explicit visibility choice (there is no default), the comment/Duet/Stitch toggles, and a commercial-content disclosure. Ads for your own game count as *"Your brand"*, labelled "Promotional content". The editor and review page show all of these.
 - **Music:** neither TikTok nor Instagram offers licensed sounds through their API, so bake the music into the video.
+- **Photo posts:** TikTok only downloads photos from a public link on a **verified** domain, so they need the tunnel plus one-time verification. In the developer portal open your app → *URL properties* → add a **URL prefix** with your tunnel address (e.g. `https://name.ngrok-free.dev/`) and download the signature file (`tiktok….txt`). Save it into the inbox folder: PowerPoster serves exactly that file at the root of the tunnel, so you can click *Verify*. Nothing else from the inbox becomes public. The caption is sent as the photo description (up to 4000 characters), also in inbox mode. *Add recommended music* lets TikTok pick a sound for direct photo posts.
 
 ### 4. Discord
 
@@ -245,6 +266,7 @@ Discord needs no app, no tunnel and no sign-in: PowerPoster posts through a **ch
 
 Things to know about Discord:
 - **Upload limit:** Discord only accepts files up to the server's limit: 10 MB without boosts, 50 MB at boost level 2, 100 MB at level 3. PowerPoster compresses the video to fit `DISCORD_MAX_UPLOAD_MB` (default 10) and warns on the review page when that makes it blurry. Shorter clips look better.
+- **Images:** up to 10 per message, shown as a gallery. PNG, JPEG and WebP are uploaded as they are (PNG stays lossless); only images larger than 4096 px or the upload limit are converted. All images of a post together must fit `DISCORD_MAX_UPLOAD_MB`.
 - **Notify:** per post, choose to ping nobody (default), `@here` or `@everyone`. Mentions written in the caption never ping.
 - **Forum channels** need a *Forum post title* (an option on the post); text channels leave it empty.
 - **Stats:** likes are the emoji reactions on the message, comments are replies in a thread started from it. Deleting the message in Discord shows the post as *Removed*.
@@ -288,11 +310,11 @@ internal/
   app/                  use cases: posts, conversion, validation, approval, publishing, connections
   api/                  REST API, media files, web UI, OAuth callbacks, security middleware
   mcpserver/            MCP tools and resources for Claude
-  media/                ffprobe, conversion planner, ffmpeg runner
+  media/                ffprobe, conversion planner for videos and images, ffmpeg runner
   platform/             adapter interface, caption rules, registry
-    instagram/          Instagram Reels (resumable upload)
-    tiktok/             TikTok Content Posting API (chunked upload, inbox/direct)
-    discord/            Discord channel webhook (multipart upload)
+    instagram/          Instagram Reels (resumable upload), image and carousel posts
+    tiktok/             TikTok Content Posting API (chunked upload, inbox/direct, photo posts)
+    discord/            Discord channel webhook (multipart upload, several files)
   jobs/                 background job queue (stored in SQLite, survives restarts)
   store/                SQLite schema and queries
   secret/               AES-GCM token encryption
@@ -304,7 +326,7 @@ docs/logo/              logo source images
 ### Adding a platform
 
 1. Create `internal/platform/<name>/` with a type that implements `platform.Adapter` (`internal/platform/platform.go`):
-   - `Constraints`: the platform's media and caption limits, as data. The converter and validation use them automatically.
+   - `SupportedKinds` and `Constraints`: which post kinds the platform takes (`video`, `image`) and their media and caption limits, as data. The converter and validation use them automatically.
    - `OptionsSchema`: a JSON Schema for platform settings. The UI form and the MCP tool input are generated from it.
    - `Validate` and `ReviewNotices`: rules and texts specific to the platform.
    - `Auth()`: the OAuth flow. Platforms without OAuth implement `TokenImporter` and `TokenPrompter` (with `Only: true`) instead, like Discord's webhook URL.
@@ -327,7 +349,9 @@ Nothing else needs to change: the UI, the MCP tools, conversion and review pick 
 | "cannot decrypt token" | `POWERPOSTER_SECRET_KEY` changed. Set the old key back, or reconnect the accounts |
 | Port 4000 is busy | Docker: set `PP_PORT`. Native: set `PP_PRIVATE_ADDR` and `PP_BASE_URL` |
 | A publish was interrupted by a restart | It's marked as failed. Check the platform before clicking *Retry*: the post may already be live |
+| Image post: "downloads images from a public link" | Instagram and TikTok fetch images themselves: set up the tunnel ([Connecting platforms](#1-tunnel)) |
+| TikTok photo post fails with `url_ownership_unverified` | Verify the tunnel domain as a URL prefix in the TikTok developer portal (see [TikTok](#3-tiktok) → Photo posts) |
 
 ## Roadmap
 
-Planned next: a history view grouped by platform, image and carousel posts, scheduling, more platforms (YouTube Shorts, X, Bluesky, Threads) and metrics.
+Planned next: a history view grouped by platform, scheduling, more platforms (YouTube Shorts, X, Bluesky, Threads) and metrics.

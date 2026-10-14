@@ -51,6 +51,7 @@ func fakeAPI(t *testing.T, f *fake) *httptest.Server {
 	}
 	mux.HandleFunc("POST /v2/post/publish/video/init/", initHandler)
 	mux.HandleFunc("POST /v2/post/publish/inbox/video/init/", initHandler)
+	mux.HandleFunc("POST /v2/post/publish/content/init/", initHandler)
 	mux.HandleFunc("PUT /upload", func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		f.mu.Lock()
@@ -61,7 +62,7 @@ func fakeAPI(t *testing.T, f *fake) *httptest.Server {
 	})
 	mux.HandleFunc("POST /v2/post/publish/status/fetch/", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		inbox := strings.Contains(f.initPath, "inbox")
+		inbox := strings.Contains(f.initPath, "inbox") || f.initBody["post_mode"] == "MEDIA_UPLOAD"
 		f.mu.Unlock()
 		if inbox {
 			envelope(w, map[string]any{"status": "SEND_TO_USER_INBOX"})
@@ -244,5 +245,59 @@ func TestEmbedURL(t *testing.T) {
 	}
 	if a.EmbedURL("", "p1") != "" || a.EmbedURL("https://www.tiktok.com/@dv/video/x", "v_pub_x") != "" {
 		t.Fatal("inbox/private posts must not be embeddable")
+	}
+}
+
+func photoTarget(opts string) platform.ResolvedTarget {
+	return platform.ResolvedTarget{Kind: platform.KindImage, Caption: "New biome #indiegame", Options: json.RawMessage(opts),
+		Images: []platform.File{{Path: "/data/r/1.jpg"}, {Path: "/data/r/2.jpg"}}}
+}
+
+func publicPC() platform.PublishContext {
+	p := pc("tok")
+	p.PublicURL = func(path string) (string, bool) {
+		return "https://pp.example.com/public-media/" + filepath.Base(path), true
+	}
+	return p
+}
+
+func TestPhotoPostDirect(t *testing.T) {
+	f := &fake{}
+	a := newTestAdapter(fakeAPI(t, f).URL)
+	opts := `{"mode":"direct","privacy_level":"SELF_ONLY","auto_add_music":true,"commercial_content":true,"brand_organic":true}`
+	res, err := a.Publish(context.Background(), publicPC(), photoTarget(opts))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.initPath != "/v2/post/publish/content/init/" || f.initBody["media_type"] != "PHOTO" || f.initBody["post_mode"] != "DIRECT_POST" {
+		t.Fatalf("init %s %v", f.initPath, f.initBody)
+	}
+	pi := f.initBody["post_info"].(map[string]any)
+	si := f.initBody["source_info"].(map[string]any)
+	if pi["description"] != "New biome #indiegame" || pi["privacy_level"] != "SELF_ONLY" || pi["auto_add_music"] != true || pi["brand_organic_toggle"] != true {
+		t.Fatalf("post_info %v", pi)
+	}
+	if si["source"] != "PULL_FROM_URL" || fmt.Sprint(si["photo_images"]) != "[https://pp.example.com/public-media/1.jpg https://pp.example.com/public-media/2.jpg]" {
+		t.Fatalf("source_info %v", si)
+	}
+	if res.Permalink != "https://www.tiktok.com/@donnervolk/photo/7123456789" {
+		t.Fatalf("permalink %q", res.Permalink)
+	}
+}
+
+func TestPhotoPostInboxAndTunnel(t *testing.T) {
+	f := &fake{}
+	a := newTestAdapter(fakeAPI(t, f).URL)
+	res, err := a.Publish(context.Background(), publicPC(), photoTarget(`{"mode":"inbox"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pi := f.initBody["post_info"].(map[string]any)
+	if f.initBody["post_mode"] != "MEDIA_UPLOAD" || pi["description"] != "New biome #indiegame" || pi["privacy_level"] != nil || !strings.Contains(res.Note, "inbox") {
+		t.Fatalf("init %v note %q", f.initBody, res.Note)
+	}
+	// Without the tunnel TikTok can't fetch the photos.
+	if _, err := a.Publish(context.Background(), pc("tok"), photoTarget(`{"mode":"inbox"}`)); err == nil || !strings.Contains(err.Error(), "tunnel") {
+		t.Fatalf("expected tunnel error, got %v", err)
 	}
 }

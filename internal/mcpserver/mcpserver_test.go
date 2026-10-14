@@ -152,3 +152,69 @@ func TestClaudeWorkflowOverHTTP(t *testing.T) {
 		t.Fatalf("sky-forge should not be connected: %v", p)
 	}
 }
+
+func TestClaudeImagePost(t *testing.T) {
+	fake := &testutil.FakeAdapter{Name: "fake"}
+	a := testutil.NewApp(t, fake)
+	srv := httptest.NewServer(mcpserver.Handler(a))
+	defer srv.Close()
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil).Connect(context.Background(), &mcp.StreamableClientTransport{Endpoint: srv.URL}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cs.Close()
+
+	cons, _ := call(t, cs, "get_platform_constraints", map[string]any{"platform": "fake"})
+	img := cons["constraints"].(map[string]any)["image"].(map[string]any)["image"].(map[string]any)
+	if img["maxCount"] != float64(3) || img["aspectMin"] != 0.8 {
+		t.Fatalf("image constraints %v", cons["constraints"])
+	}
+
+	post, _ := call(t, cs, "create_post", map[string]any{"caption": "Screenshots!"})
+	id := post["id"].(float64)
+	var hosts []string
+	for _, name := range []string{"one.png", "two.png", "three.png"} {
+		testutil.MakeImageSized(t, a, name, 1600, 900)
+		hosts = append(hosts, testutil.HostInbox+`\`+name)
+	}
+	post, isErr := call(t, cs, "attach_media", map[string]any{"post_id": id, "paths": hosts[:2]})
+	if isErr || post["kind"] != "image" || len(post["media"].([]any)) != 2 {
+		t.Fatalf("attach images: %v", post)
+	}
+	m := post["media"].([]any)
+	first, second := m[0].(map[string]any), m[1].(map[string]any)
+	if first["type"] != "image" || first["format"] != "png" || first["name"] != "one.png" {
+		t.Fatalf("media %v", m)
+	}
+	// Add the third, then reorder and remove.
+	if post, isErr = call(t, cs, "attach_media", map[string]any{"post_id": id, "path": hosts[2]}); isErr || len(post["media"].([]any)) != 3 {
+		t.Fatalf("append: %v", post)
+	}
+	third := post["media"].([]any)[2].(map[string]any)
+	if post, isErr = call(t, cs, "reorder_media", map[string]any{"post_id": id, "media_ids": []any{third["id"], first["id"], second["id"]}}); isErr ||
+		post["media"].([]any)[0].(map[string]any)["name"] != "three.png" {
+		t.Fatalf("reorder: %v", post)
+	}
+	if post, isErr = call(t, cs, "remove_media", map[string]any{"post_id": id, "media_id": second["id"]}); isErr || len(post["media"].([]any)) != 2 {
+		t.Fatalf("remove: %v", post)
+	}
+	// replace=true starts over.
+	if post, isErr = call(t, cs, "attach_media", map[string]any{"post_id": id, "paths": hosts[1:2], "replace": true}); isErr ||
+		len(post["media"].([]any)) != 1 || post["media"].([]any)[0].(map[string]any)["name"] != "two.png" {
+		t.Fatalf("replace: %v", post)
+	}
+
+	var v map[string]any
+	testutil.WaitFor(t, "ready", 60*time.Second, func() bool {
+		v, _ = call(t, cs, "validate_post", map[string]any{"post_id": id})
+		return v["ready"] == true
+	})
+	tg := v["targets"].([]any)[0].(map[string]any)
+	images := tg["images"].([]any)
+	if len(images) != 1 || images[0].(map[string]any)["width"] != float64(1080) || tg["rendition"] != nil {
+		t.Fatalf("validate targets %v", tg)
+	}
+	if res, isErr := call(t, cs, "set_cover_image", map[string]any{"post_id": id, "path": hosts[0]}); !isErr || !strings.Contains(res["error"].(string), "image posts") {
+		t.Fatalf("cover on image post: %v", res)
+	}
+}

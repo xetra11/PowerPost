@@ -42,6 +42,8 @@ func (s *Server) PrivateHandler() http.Handler {
 	mux.HandleFunc("DELETE /api/posts/{id}", s.deletePost)
 	mux.HandleFunc("PATCH /api/posts/{id}/targets/{platform}", s.updateTarget)
 	mux.HandleFunc("POST /api/posts/{id}/media", s.uploadMedia)
+	mux.HandleFunc("PUT /api/posts/{id}/media/order", s.reorderMedia)
+	mux.HandleFunc("DELETE /api/posts/{id}/media/{asset}", s.removeMedia)
 	mux.HandleFunc("POST /api/posts/{id}/approve", s.approve)
 	mux.HandleFunc("POST /api/posts/{id}/unapprove", s.unapprove)
 	mux.HandleFunc("POST /api/posts/{id}/publish", s.publish)
@@ -85,6 +87,7 @@ func (s *Server) PublicHandler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /oauth/{platform}/callback", s.oauthCallback)
 	mux.HandleFunc("GET /public-media/{token}", s.publicMedia)
+	mux.HandleFunc("GET /{file}", s.verificationFile)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	})
@@ -216,11 +219,13 @@ func (s *Server) updateTarget(w http.ResponseWriter, r *http.Request) {
 }
 
 // uploadMedia streams a multipart "file" field to disk without buffering it in memory.
+// Images are added to the post's images unless ?replace=1 is given.
 func (s *Server) uploadMedia(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
+	replace := r.URL.Query().Get("replace") == "1"
 	mr, err := r.MultipartReader()
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "expected multipart/form-data with a \"file\" field")
@@ -238,11 +243,40 @@ func (s *Server) uploadMedia(w http.ResponseWriter, r *http.Request) {
 		if part.FormName() != "file" {
 			continue
 		}
-		v, err := s.App.AttachUpload(r.Context(), id, part, part.FileName())
+		v, err := s.App.AttachUpload(r.Context(), id, part, part.FileName(), replace)
 		s.respond(w, v, err)
 		return
 	}
 	writeError(w, http.StatusBadRequest, "missing \"file\" field")
+}
+
+func (s *Server) reorderMedia(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		IDs []int64 `json:"ids"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	v, err := s.App.ReorderMedia(r.Context(), id, in.IDs)
+	s.respond(w, v, err)
+}
+
+func (s *Server) removeMedia(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	asset, err := strconv.ParseInt(r.PathValue("asset"), 10, 64)
+	if err != nil || asset <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid media id")
+		return
+	}
+	v, err := s.App.RemoveMedia(r.Context(), id, asset)
+	s.respond(w, v, err)
 }
 
 func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
@@ -444,8 +478,24 @@ func (s *Server) publicMedia(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "video/mp4")
+	ct := mime.TypeByExtension(path.Ext(p))
+	if ct == "" {
+		ct = "video/mp4"
+	}
+	w.Header().Set("Content-Type", ct)
 	w.Header().Set("Cache-Control", "no-store")
+	http.ServeFile(w, r, p)
+}
+
+// verificationFile serves a TikTok URL-prefix signature file (tiktok….txt)
+// dropped into the inbox, so the tunnel domain can be verified for photo posts.
+func (s *Server) verificationFile(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.App.VerificationFile(r.PathValue("file"))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	http.ServeFile(w, r, p)
 }
 

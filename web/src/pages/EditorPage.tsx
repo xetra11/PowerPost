@@ -5,6 +5,7 @@ import {
   captionLength,
   composeCaption,
   describeMedia,
+  isConverting,
   parseHashtags,
   uploadCover,
   uploadMedia,
@@ -33,9 +34,6 @@ function draftFrom(p: Post): Draft {
   return { title: p.title, caption: p.caption, hashtags: p.hashtags.join(' '), overrides }
 }
 
-const isConverting = (p: Post | null) =>
-  !!p && p.targets.some((t) => t.enabled && (!t.rendition || t.rendition.status === 'pending' || t.rendition.status === 'processing') && !!p.asset)
-
 export default function EditorPage() {
   const id = Number(useParams().id)
   const navigate = useNavigate()
@@ -44,7 +42,7 @@ export default function EditorPage() {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [upload, setUpload] = useState<number | null>(null)
+  const [upload, setUpload] = useState<{ n: number; of: number; fraction: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -109,12 +107,20 @@ export default function EditorPage() {
     }
   }
 
-  const onFile = async (file: File | undefined) => {
-    if (!file) return
+  // A post has one video or images: a video replaces everything, images are added in order.
+  const onFiles = async (list: FileList | null | undefined) => {
+    const files = [...(list ?? [])]
+    if (files.length === 0) return
     setError(null)
-    setUpload(0)
+    if (files.length > 1 && files.some((f) => !f.type.startsWith('image/'))) {
+      setError('Choose one video, or only images.')
+      return
+    }
     try {
-      setPost(await uploadMedia(id, file, setUpload))
+      for (const [n, file] of files.entries()) {
+        setUpload({ n: n + 1, of: files.length, fraction: 0 })
+        setPost(await uploadMedia(id, file, (fraction) => setUpload({ n: n + 1, of: files.length, fraction })))
+      }
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -122,8 +128,14 @@ export default function EditorPage() {
     }
   }
 
+  const moveImage = (index: number, by: number) => {
+    const ids = post.assets.map((a) => a.id)
+    ;[ids[index], ids[index + by]] = [ids[index + by], ids[index]]
+    act(() => api.reorderMedia(id, ids))
+  }
+
   const remove = async () => {
-    if (!confirm(`Delete "${post.title}" and its video files?`)) return
+    if (!confirm(`Delete "${post.title}" and its media files?`)) return
     try {
       await api.deletePost(id)
       navigate('/')
@@ -184,9 +196,31 @@ export default function EditorPage() {
       <div className="grid editor-grid">
         <article>
           <header>
-            <strong>Video</strong>
+            <strong>{post.kind === 'image' && post.assets.length > 0 ? (post.assets.length > 1 ? `Images (${post.assets.length}, carousel)` : 'Image') : 'Media'}</strong>
           </header>
-          {post.asset ? (
+          {post.kind === 'image' && post.assets.length > 0 ? (
+            <ol className="image-grid">
+              {post.assets.map((a, i) => (
+                <li key={a.id}>
+                  <img src={a.thumbUrl || a.url} alt={a.originalName} title={`${a.originalName} · ${describeMedia(a.info)}`} />
+                  <span className="image-index">{i + 1}</span>
+                  {editable && (
+                    <span className="image-actions">
+                      <button type="button" className="small secondary" disabled={i === 0} onClick={() => moveImage(i, -1)} aria-label="Move left">
+                        ←
+                      </button>
+                      <button type="button" className="small secondary" disabled={i === post.assets.length - 1} onClick={() => moveImage(i, 1)} aria-label="Move right">
+                        →
+                      </button>
+                      <button type="button" className="small secondary" onClick={() => act(() => api.removeMedia(id, a.id))} aria-label="Remove image">
+                        ×
+                      </button>
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          ) : post.asset ? (
             <>
               <video ref={videoRef} src={post.asset.url} poster={post.asset.thumbUrl || undefined} controls preload="metadata" className="source-video" />
               <small className="muted">
@@ -205,23 +239,39 @@ export default function EditorPage() {
               onDrop={(e) => {
                 e.preventDefault()
                 setDragOver(false)
-                onFile(e.dataTransfer.files[0])
+                onFiles(e.dataTransfer.files)
               }}
             >
               {upload !== null ? (
                 <>
-                  Uploading… {Math.round(upload * 100)}%
-                  <progress value={upload} max={1} />
+                  Uploading{upload.of > 1 ? ` ${upload.n}/${upload.of}` : ''}… {Math.round(upload.fraction * 100)}%
+                  <progress value={upload.fraction} max={1} />
                 </>
               ) : (
-                <>{post.asset ? 'Replace video' : 'Drop a video here or click to choose'}</>
+                <>
+                  {post.kind === 'image' && post.assets.length > 0
+                    ? 'Add more images (or drop a video to replace them)'
+                    : post.asset
+                      ? 'Replace the video, or drop images for an image post'
+                      : 'Drop a video or images here, or click to choose'}
+                </>
               )}
-              <input type="file" accept="video/*" hidden disabled={upload !== null} onChange={(e) => onFile(e.target.files?.[0])} />
+              <input
+                type="file"
+                accept="video/*,image/jpeg,image/png,image/webp"
+                multiple
+                hidden
+                disabled={upload !== null}
+                onChange={(e) => {
+                  onFiles(e.target.files)
+                  e.target.value = ''
+                }}
+              />
             </label>
           )}
 
           <label>
-            Fit to 9:16
+            {post.kind === 'image' ? 'Fit to each platform' : 'Fit to 9:16'}
             <select
               value={post.aspectStrategy}
               disabled={!editable}
@@ -231,10 +281,14 @@ export default function EditorPage() {
               <option value="crop">Crop to fill</option>
               <option value="pad">Black bars</option>
             </select>
-            <small className="hint">Used when the video isn't already vertical.</small>
+            <small className="hint">
+              {post.kind === 'image'
+                ? "Used when an image's aspect ratio doesn't fit a platform (Instagram: 4:5 to 1.91:1, and every carousel image takes the first one's)."
+                : "Used when the video isn't already vertical."}
+            </small>
           </label>
 
-          {post.asset && (
+          {post.asset && post.kind === 'video' && (
             <CoverPicker
               post={post}
               disabled={!editable}

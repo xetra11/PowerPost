@@ -70,11 +70,20 @@ func (r Runner) Transcode(ctx context.Context, in, out string, plan Plan, durati
 }
 
 // Thumbnail writes a small JPEG poster frame.
+// at <= 0 takes the first frame; still images must not be seeked (ffmpeg
+// then writes nothing for a JPEG and still exits successfully).
 func (r Runner) Thumbnail(ctx context.Context, in, out string, at float64) error {
-	cmd := exec.CommandContext(ctx, r.FFmpeg, "-hide_banner", "-nostdin", "-y", "-ss", fmt.Sprintf("%.2f", at), "-i", in,
-		"-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", out)
-	if b, err := cmd.CombinedOutput(); err != nil {
+	args := []string{"-hide_banner", "-nostdin", "-y"}
+	if at > 0 {
+		args = append(args, "-ss", fmt.Sprintf("%.2f", at))
+	}
+	args = append(args, "-i", in, "-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "4", "-update", "1", out)
+	b, err := exec.CommandContext(ctx, r.FFmpeg, args...).CombinedOutput()
+	if err != nil {
 		return fmt.Errorf("thumbnail failed: %s", lastLines(string(b), 3))
+	}
+	if st, err := os.Stat(out); err != nil || st.Size() == 0 {
+		return fmt.Errorf("thumbnail failed: no frame written")
 	}
 	return nil
 }

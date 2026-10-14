@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"powerposter/internal/media"
 	"powerposter/internal/platform"
 )
 
@@ -23,7 +25,8 @@ type fake struct {
 	query    string
 	file     []byte
 	filename string
-	limited  int // answer 429 this many times first
+	files    []string // "field name:content type:bytes" of every file part
+	limited  int      // answer 429 this many times first
 	deleted  bool
 }
 
@@ -51,6 +54,18 @@ func fakeAPI(t *testing.T, f *fake) *httptest.Server {
 			t.Errorf("multipart: %v", err)
 		}
 		_ = json.Unmarshal([]byte(r.FormValue("payload_json")), &f.payload)
+		f.files = nil
+		for i := 0; ; i++ {
+			key := fmt.Sprintf("files[%d]", i)
+			fhs := r.MultipartForm.File[key]
+			if len(fhs) == 0 {
+				break
+			}
+			fh, _ := fhs[0].Open()
+			b, _ := io.ReadAll(fh)
+			fh.Close()
+			f.files = append(f.files, fmt.Sprintf("%s:%s:%s", fhs[0].Filename, fhs[0].Header.Get("Content-Type"), b))
+		}
 		file, hdr, err := r.FormFile("files[0]")
 		if err != nil {
 			t.Errorf("file: %v", err)
@@ -233,4 +248,43 @@ func toStrings(v any) []string {
 		out = append(out, s.(string))
 	}
 	return out
+}
+
+func TestPublishImages(t *testing.T) {
+	f := &fake{}
+	a := newAdapter(fakeAPI(t, f))
+	dir := t.TempDir()
+	var images []platform.File
+	for i, name := range []string{"a.png", "b.jpg"} {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(fmt.Sprintf("image-%d", i+1)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		images = append(images, platform.File{Path: p})
+	}
+	tg := platform.ResolvedTarget{PostID: 7, Kind: platform.KindImage, Caption: "New biome", Options: json.RawMessage(`{"mention":"none"}`), Images: images}
+	res, err := a.Publish(context.Background(), pc(hookURL), tg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RemoteID != "42" {
+		t.Errorf("result: %+v", res)
+	}
+	want := "post-7-1.png:image/png:image-1 post-7-2.jpg:image/jpeg:image-2"
+	if got := strings.Join(f.files, " "); got != want {
+		t.Errorf("files:\n%s\nwant:\n%s", got, want)
+	}
+	if att := f.payload["attachments"].([]any); len(att) != 2 || att[1].(map[string]any)["filename"] != "post-7-2.jpg" {
+		t.Errorf("attachments: %v", att)
+	}
+}
+
+func TestValidateImagesTotalSize(t *testing.T) {
+	a := New(10)
+	tg := platform.ResolvedTarget{Kind: platform.KindImage, Options: json.RawMessage(`{}`), Images: []platform.File{
+		{Info: media.Info{Size: 6 << 20}}, {Info: media.Info{Size: 6 << 20}},
+	}}
+	if v := a.Validate(tg); len(v) != 1 || v[0].Code != "FILES_TOO_LARGE" {
+		t.Fatalf("issues %v", v)
+	}
 }

@@ -62,12 +62,13 @@ type Options struct {
 	BrandOrganic      bool   `json:"brand_organic"` // "Your brand" → labelled "Promotional content"
 	BrandContent      bool   `json:"brand_content"` // "Branded content" → labelled "Paid partnership"
 	IsAIGC            bool   `json:"is_aigc"`
+	AutoAddMusic      bool   `json:"auto_add_music"` // photo posts only
 }
 
 func (a *Adapter) ID() platform.ID     { return ID }
 func (a *Adapter) DisplayName() string { return "TikTok" }
 func (a *Adapter) SupportedKinds() []platform.PostKind {
-	return []platform.PostKind{platform.KindVideo}
+	return []platform.PostKind{platform.KindVideo, platform.KindImage}
 }
 func (a *Adapter) Configured() bool             { return a.ClientKey != "" && a.ClientSecret != "" }
 func (a *Adapter) Auth() platform.Authenticator { return a }
@@ -75,7 +76,21 @@ func (a *Adapter) Auth() platform.Authenticator { return a }
 // Constraints follow https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide.
 // The API accepts up to 4096 px, but TikTok re-encodes to ≤1080p anyway, so we
 // convert to 1080x1920 ourselves: smaller uploads and we control the quality.
-func (a *Adapter) Constraints(platform.PostKind) platform.Constraints {
+// Photo posts take JPEG/WebP up to 1080p, pulled from a public link.
+func (a *Adapter) Constraints(kind platform.PostKind) platform.Constraints {
+	if kind == platform.KindImage {
+		return platform.Constraints{
+			Image: &media.ImageConstraints{
+				Formats:        []string{"jpeg", "webp"},
+				MaxWidth:       1080,
+				MaxHeight:      1920,
+				MaxBytes:       20 << 20,
+				MaxCount:       35,
+				NeedsPublicURL: true, // photos are only accepted as PULL_FROM_URL
+			},
+			Caption: platform.CaptionRules{MaxChars: 4000, CountUTF16: true}, // photo description
+		}
+	}
 	return platform.Constraints{
 		Video: &media.VideoConstraints{
 			Containers:   []string{"mp4", "mov"},
@@ -109,14 +124,15 @@ func (a *Adapter) OptionsSchema() json.RawMessage {
     },
     "privacy_level": {
       "type": "string",
-      "title": "Who can view this video",
+      "title": "Who can view this post",
       "enum": ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"],
       "x-enumLabels": {"PUBLIC_TO_EVERYONE": "Everyone", "MUTUAL_FOLLOW_FRIENDS": "Friends", "FOLLOWER_OF_CREATOR": "Followers", "SELF_ONLY": "Only me"},
       "description": "Required for direct posts. TikTok requires you to choose; there is no default."
     },
     "disable_comment": {"type": "boolean", "title": "Turn off comments", "default": false},
-    "disable_duet": {"type": "boolean", "title": "Turn off Duet", "default": false},
-    "disable_stitch": {"type": "boolean", "title": "Turn off Stitch", "default": false},
+    "disable_duet": {"type": "boolean", "title": "Turn off Duet (videos)", "default": false},
+    "disable_stitch": {"type": "boolean", "title": "Turn off Stitch (videos)", "default": false},
+    "auto_add_music": {"type": "boolean", "title": "Add recommended music (photo posts)", "description": "Lets TikTok pick a sound for photo posts. Has no effect on videos.", "default": true},
     "commercial_content": {
       "type": "boolean",
       "title": "This video promotes a brand, product or service",
@@ -131,7 +147,7 @@ func (a *Adapter) OptionsSchema() json.RawMessage {
 }
 
 func (a *Adapter) DefaultOptions() json.RawMessage {
-	return json.RawMessage(`{"mode":"inbox","privacy_level":"","disable_comment":false,"disable_duet":false,"disable_stitch":false,"commercial_content":true,"brand_organic":true,"brand_content":false,"is_aigc":false}`)
+	return json.RawMessage(`{"mode":"inbox","privacy_level":"","disable_comment":false,"disable_duet":false,"disable_stitch":false,"auto_add_music":true,"commercial_content":true,"brand_organic":true,"brand_content":false,"is_aigc":false}`)
 }
 
 func (a *Adapter) Validate(t platform.ResolvedTarget) []platform.ValidationIssue {
@@ -146,7 +162,11 @@ func (a *Adapter) Validate(t platform.ResolvedTarget) []platform.ValidationIssue
 	}
 	switch o.Mode {
 	case ModeInbox:
-		add(platform.SeverityInfo, "INBOX_CAPTION", "Inbox mode: TikTok does not accept a caption through the API. Copy it from the review page when you finish the post in the TikTok app.")
+		if t.Kind == platform.KindImage {
+			add(platform.SeverityInfo, "INBOX_CAPTION", "Inbox mode: the photos and caption go to your TikTok inbox; you finish the post in the TikTok app.")
+		} else {
+			add(platform.SeverityInfo, "INBOX_CAPTION", "Inbox mode: TikTok does not accept a caption through the API. Copy it from the review page when you finish the post in the TikTok app.")
+		}
 		return out
 	case ModeDirect:
 	default:
@@ -154,7 +174,7 @@ func (a *Adapter) Validate(t platform.ResolvedTarget) []platform.ValidationIssue
 		return out
 	}
 	if o.PrivacyLevel == "" {
-		add(platform.SeverityError, "PRIVACY_REQUIRED", "Choose who can view this video. TikTok requires an explicit choice.")
+		add(platform.SeverityError, "PRIVACY_REQUIRED", "Choose who can view this post. TikTok requires an explicit choice.")
 	} else if !slices.Contains(privacyLevels, o.PrivacyLevel) {
 		add(platform.SeverityError, "PRIVACY_INVALID", "Unknown privacy level "+o.PrivacyLevel+".")
 	}
@@ -176,7 +196,7 @@ func (a *Adapter) ReviewNotices(raw json.RawMessage) []string {
 		return nil
 	}
 	if o.Mode == ModeInbox {
-		return []string{"The video will be sent to your TikTok inbox. Open TikTok, add the caption and post it there."}
+		return []string{"The post will be sent to your TikTok inbox. Open TikTok to finish and post it there."}
 	}
 	var n []string
 	if o.CommercialContent && o.BrandContent {
@@ -344,6 +364,12 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 		return platform.PublishResult{}, fmt.Errorf("creator info: %w", err)
 	}
 	pc.Log("posting as %s (@%s)", ci.CreatorNickname, ci.CreatorUsername)
+	if o.Mode != ModeInbox && len(ci.PrivacyLevelOptions) > 0 && !slices.Contains(ci.PrivacyLevelOptions, o.PrivacyLevel) {
+		return platform.PublishResult{}, fmt.Errorf("privacy level %s is not available for this account (allowed: %s)", o.PrivacyLevel, strings.Join(ci.PrivacyLevelOptions, ", "))
+	}
+	if t.Kind == platform.KindImage {
+		return a.publishPhotos(ctx, pc, t, o, ci)
+	}
 	if ci.MaxVideoPostDurationSec > 0 && t.File.Duration > float64(ci.MaxVideoPostDurationSec) {
 		return platform.PublishResult{}, fmt.Errorf("video is %s; this account may post at most %s", media.FormatDuration(t.File.Duration), media.FormatDuration(float64(ci.MaxVideoPostDurationSec)))
 	}
@@ -360,9 +386,6 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	if o.Mode == ModeInbox {
 		err = a.api(ctx, token, http.MethodPost, "/v2/post/publish/inbox/video/init/", map[string]any{"source_info": source}, &init)
 	} else {
-		if len(ci.PrivacyLevelOptions) > 0 && !slices.Contains(ci.PrivacyLevelOptions, o.PrivacyLevel) {
-			return platform.PublishResult{}, fmt.Errorf("privacy level %s is not available for this account (allowed: %s)", o.PrivacyLevel, strings.Join(ci.PrivacyLevelOptions, ", "))
-		}
 		postInfo := map[string]any{
 			"title":                    t.Caption,
 			"privacy_level":            o.PrivacyLevel,
@@ -386,7 +409,55 @@ func (a *Adapter) Publish(ctx context.Context, pc platform.PublishContext, t pla
 	}
 
 	pc.Progress("processing on TikTok")
-	return a.waitDone(ctx, pc, token, init.PublishID, o.Mode, ci.CreatorUsername)
+	return a.waitDone(ctx, pc, token, init.PublishID, o.Mode, ci.CreatorUsername, "video")
+}
+
+// publishPhotos posts images as a TikTok photo post. TikTok only pulls photos
+// from public links on a domain verified in the developer portal.
+func (a *Adapter) publishPhotos(ctx context.Context, pc platform.PublishContext, t platform.ResolvedTarget, o Options, ci CreatorInfo) (platform.PublishResult, error) {
+	if len(t.Images) == 0 {
+		return platform.PublishResult{}, fmt.Errorf("the post has no converted images")
+	}
+	urls := make([]string, len(t.Images))
+	for i, img := range t.Images {
+		ok := false
+		if pc.PublicURL != nil {
+			urls[i], ok = pc.PublicURL(img.Path)
+		}
+		if !ok {
+			return platform.PublishResult{}, fmt.Errorf("TikTok downloads photos from a public link. Set up the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL, see README → Tunnel) and retry")
+		}
+	}
+
+	postInfo := map[string]any{"description": t.Caption}
+	mode := "MEDIA_UPLOAD"
+	if o.Mode == ModeDirect {
+		mode = "DIRECT_POST"
+		postInfo["privacy_level"] = o.PrivacyLevel
+		postInfo["disable_comment"] = o.DisableComment || ci.CommentDisabled
+		postInfo["auto_add_music"] = o.AutoAddMusic
+		postInfo["brand_content_toggle"] = o.CommercialContent && o.BrandContent
+		postInfo["brand_organic_toggle"] = o.CommercialContent && o.BrandOrganic
+	}
+	body := map[string]any{
+		"post_info":   postInfo,
+		"source_info": map[string]any{"source": "PULL_FROM_URL", "photo_cover_index": 0, "photo_images": urls},
+		"post_mode":   mode,
+		"media_type":  "PHOTO",
+	}
+
+	pc.Progress("sending photos")
+	var init initResponse
+	if err := a.api(ctx, pc.Token.AccessToken, http.MethodPost, "/v2/post/publish/content/init/", body, &init); err != nil {
+		if strings.Contains(err.Error(), "url_ownership_unverified") {
+			return platform.PublishResult{}, fmt.Errorf("TikTok only pulls photos from a verified domain: add your tunnel domain under Manage apps → URL properties in the TikTok developer portal: %w", err)
+		}
+		return platform.PublishResult{}, fmt.Errorf("init photo post: %w", err)
+	}
+	pc.Log("publish_id %s, TikTok fetches %d photo(s)", init.PublishID, len(urls))
+
+	pc.Progress("processing on TikTok")
+	return a.waitDone(ctx, pc, pc.Token.AccessToken, init.PublishID, o.Mode, ci.CreatorUsername, "photo")
 }
 
 func (a *Adapter) uploadChunks(ctx context.Context, uploadURL, path string, size, chunk, count int64, pc platform.PublishContext) error {
@@ -413,7 +484,8 @@ func (a *Adapter) uploadChunks(ctx context.Context, uploadURL, path string, size
 	return nil
 }
 
-func (a *Adapter) waitDone(ctx context.Context, pc platform.PublishContext, token, publishID, mode, username string) (platform.PublishResult, error) {
+// waitDone polls until TikTok finished the post. kind is the permalink path: video or photo.
+func (a *Adapter) waitDone(ctx context.Context, pc platform.PublishContext, token, publishID, mode, username, kind string) (platform.PublishResult, error) {
 	res := platform.PublishResult{RemoteID: publishID}
 	deadline := time.Now().Add(a.PollTimeout)
 	last := ""
@@ -444,7 +516,7 @@ func (a *Adapter) waitDone(ctx context.Context, pc platform.PublishContext, toke
 				id := strings.Trim(string(s.PostIDs[0]), `"`) // keep big numeric IDs exact
 				res.RemoteID = id
 				if username != "" {
-					res.Permalink = fmt.Sprintf("https://www.tiktok.com/@%s/video/%s", username, id)
+					res.Permalink = fmt.Sprintf("https://www.tiktok.com/@%s/%s/%s", username, kind, id)
 				}
 			} else {
 				res.Note = "Posted. TikTok returned no public link (private post or still in moderation)."

@@ -26,7 +26,8 @@ type Info struct {
 	AudioCodec      string  `json:"audioCodec,omitempty"`
 	AudioSampleRate int     `json:"audioSampleRate,omitempty"`
 	AudioChannels   int     `json:"audioChannels,omitempty"`
-	Size            int64   `json:"size"` // bytes
+	Size            int64   `json:"size"`            // bytes
+	Image           bool    `json:"image,omitempty"` // a still image (JPEG, PNG, WebP…), not a video
 }
 
 func (i Info) Aspect() float64 {
@@ -117,6 +118,13 @@ func parseProbe(data []byte) (Info, error) {
 	}
 	if !info.HasVideo {
 		return info, fmt.Errorf("file has no video stream")
+	}
+	// Still images come through the image demuxers: "image2" (by extension)
+	// or "<codec>_pipe" (by content). Animated GIFs stay videos.
+	if info.Container == "image2" || strings.HasSuffix(info.Container, "_pipe") {
+		info.Image = true
+		info.Duration, info.FPS, info.Bitrate = 0, 0, 0
+		info.HasAudio, info.AudioCodec, info.AudioSampleRate, info.AudioChannels = false, "", 0, 0
 	}
 	return info, nil
 }

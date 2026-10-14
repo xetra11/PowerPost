@@ -20,9 +20,9 @@ type transcodePayload struct {
 	Plan    media.Plan `json:"plan"`
 }
 
-// ensureRenditions makes sure every enabled target has a rendition matching
-// the current source and settings, queueing conversions where needed.
-// Targets that need the identical output share one file and one job.
+// ensureRenditions makes sure every enabled target has a rendition of every
+// media file matching the current source and settings, queueing conversions
+// where needed. Targets that need the identical output share one file and one job.
 func (a *App) ensureRenditions(ctx context.Context, postID int64) error {
 	a.renditionMu.Lock()
 	defer a.renditionMu.Unlock()
@@ -31,19 +31,15 @@ func (a *App) ensureRenditions(ctx context.Context, postID int64) error {
 	if err != nil {
 		return err
 	}
-	assets, err := a.Store.ListAssets(ctx, postID)
+	assets, err := a.mediaAssets(ctx, p)
 	if err != nil || len(assets) == 0 {
 		return err
 	}
-	asset := assets[0]
 	targets, err := a.Store.ListTargets(ctx, postID)
 	if err != nil {
 		return err
 	}
-	existing, err := a.Store.ListRenditions(ctx, asset.ID)
-	if err != nil {
-		return err
-	}
+	strategy := media.Strategy(p.AspectStrategy)
 
 	for _, t := range targets {
 		if !t.Enabled {
@@ -53,51 +49,74 @@ func (a *App) ensureRenditions(ctx context.Context, postID int64) error {
 		if !ok {
 			continue
 		}
-		c := ad.Constraints(platform.PostKind(p.Kind)).Video
-		if c == nil {
-			continue
-		}
-		plan := media.NewPlan(asset.Info, *c, media.Strategy(p.AspectStrategy), a.Cfg.FFmpegEncoder)
-		hash := plan.Hash()
-		path := filepath.Join(a.renditionsDir(), fmt.Sprintf("%d-%s.mp4", asset.ID, hash[:16]))
-
-		var prev *store.Rendition
-		for i := range existing {
-			if existing[i].Platform == t.Platform {
-				prev = &existing[i]
+		c := ad.Constraints(platform.PostKind(p.Kind))
+		if p.Kind == string(platform.KindImage) {
+			if c.Image == nil {
+				continue
 			}
-		}
-		if prev != nil && prev.ProfileHash == hash && prev.Status != "failed" {
-			continue // up to date or in progress
-		}
-
-		r := store.Rendition{AssetID: asset.ID, Platform: t.Platform, ProfileHash: hash, Plan: plan, Path: path, Status: "pending"}
-		enqueue := true
-		if other, err := a.Store.FindRenditionByPath(ctx, path); err == nil && other.Status != "failed" {
-			if other.Status == "ready" {
-				if _, statErr := os.Stat(path); statErr == nil {
-					r.Status, r.Progress, r.Info, r.Checksum = "ready", 1, other.Info, other.Checksum
-					enqueue = false
+			aspect := 0.0 // each image keeps its own (clamped) aspect ratio
+			if c.Image.SameAspect {
+				aspect = c.Image.CanvasAspect(assets[0].Info)
+			}
+			for _, as := range assets {
+				if err := a.ensureRendition(ctx, as, t.Platform, media.NewImagePlan(as.Info, *c.Image, strategy, aspect)); err != nil {
+					return err
 				}
-			} else {
-				r.Status, r.Progress = other.Status, other.Progress
-				enqueue = false // the other target's job produces this file
 			}
-		} else if err != nil && !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
-
-		if err := a.Store.UpsertRendition(ctx, &r); err != nil {
-			return err
-		}
-		if prev != nil && prev.Path != path {
-			a.removeIfUnused(ctx, prev.Path)
-		}
-		if enqueue {
-			if err := a.Queue.Enqueue(ctx, jobTranscode, transcodePayload{AssetID: asset.ID, Path: path, Plan: plan}); err != nil {
+		} else if c.Video != nil {
+			if err := a.ensureRendition(ctx, assets[0], t.Platform, media.NewPlan(assets[0].Info, *c.Video, strategy, a.Cfg.FFmpegEncoder)); err != nil {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// ensureRendition records the rendition of one asset for one platform and
+// queues its conversion unless it is up to date or another platform's job
+// produces the same file. Callers hold renditionMu.
+func (a *App) ensureRendition(ctx context.Context, asset store.Asset, platformID string, plan media.Plan) error {
+	hash := plan.Hash()
+	path := filepath.Join(a.renditionsDir(), fmt.Sprintf("%d-%s%s", asset.ID, hash[:16], plan.Ext()))
+
+	existing, err := a.Store.ListRenditions(ctx, asset.ID)
+	if err != nil {
+		return err
+	}
+	var prev *store.Rendition
+	for i := range existing {
+		if existing[i].Platform == platformID {
+			prev = &existing[i]
+		}
+	}
+	if prev != nil && prev.ProfileHash == hash && prev.Status != "failed" {
+		return nil // up to date or in progress
+	}
+
+	r := store.Rendition{AssetID: asset.ID, Platform: platformID, ProfileHash: hash, Plan: plan, Path: path, Status: "pending"}
+	enqueue := true
+	if other, err := a.Store.FindRenditionByPath(ctx, path); err == nil && other.Status != "failed" {
+		if other.Status == "ready" {
+			if _, statErr := os.Stat(path); statErr == nil {
+				r.Status, r.Progress, r.Info, r.Checksum = "ready", 1, other.Info, other.Checksum
+				enqueue = false
+			}
+		} else {
+			r.Status, r.Progress = other.Status, other.Progress
+			enqueue = false // the other target's job produces this file
+		}
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+
+	if err := a.Store.UpsertRendition(ctx, &r); err != nil {
+		return err
+	}
+	if prev != nil && prev.Path != path {
+		a.removeIfUnused(ctx, prev.Path)
+	}
+	if enqueue {
+		return a.Queue.Enqueue(ctx, jobTranscode, transcodePayload{AssetID: asset.ID, Path: path, Plan: plan})
 	}
 	return nil
 }
@@ -120,13 +139,18 @@ func (a *App) runTranscode(ctx context.Context, raw json.RawMessage) error {
 
 	a.setRenditionProgress(ctx, pl.Path, 0)
 	if _, err := os.Stat(pl.Path); err != nil { // may exist when re-queued after a crash
-		var last time.Time
-		err := a.Media.Transcode(ctx, asset.Path, pl.Path, pl.Plan, asset.Info.Duration, func(f float64) {
-			if time.Since(last) > time.Second {
-				last = time.Now()
-				a.setRenditionProgress(ctx, pl.Path, f)
-			}
-		})
+		var err error
+		if pl.Plan.Image {
+			err = a.Media.ConvertImage(ctx, asset.Path, pl.Path, pl.Plan)
+		} else {
+			var last time.Time
+			err = a.Media.Transcode(ctx, asset.Path, pl.Path, pl.Plan, asset.Info.Duration, func(f float64) {
+				if time.Since(last) > time.Second {
+					last = time.Now()
+					a.setRenditionProgress(ctx, pl.Path, f)
+				}
+			})
+		}
 		if err != nil {
 			if ctx.Err() == nil {
 				a.renditionMu.Lock()

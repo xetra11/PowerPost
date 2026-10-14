@@ -16,7 +16,8 @@ type PostKind string
 
 const (
 	KindVideo PostKind = "video"
-	// KindImage and KindCarousel are planned (phase 2).
+	// KindImage is one image, or several shown as a carousel.
+	KindImage PostKind = "image"
 )
 
 type Severity string
@@ -56,6 +57,7 @@ type CaptionRules struct {
 // Constraints bundle everything a platform accepts for one post kind.
 type Constraints struct {
 	Video   *media.VideoConstraints `json:"video,omitempty"`
+	Image   *media.ImageConstraints `json:"image,omitempty"`
 	Caption CaptionRules            `json:"caption"`
 }
 
@@ -68,8 +70,16 @@ type ResolvedTarget struct {
 	CoverMs int64           `json:"coverMs"`
 	// CoverImagePath is an uploaded cover image (JPEG 1080x1920), if any.
 	CoverImagePath string     `json:"-"`
-	FilePath       string     `json:"-"` // the rendition that gets uploaded
+	FilePath       string     `json:"-"` // video posts: the rendition that gets uploaded
 	File           media.Info `json:"file"`
+	// Images are the converted images of an image post, in order.
+	Images []File `json:"images,omitempty"`
+}
+
+// File is a converted file ready for upload.
+type File struct {
+	Path string     `json:"-"`
+	Info media.Info `json:"info"`
 }
 
 type TokenSet struct {

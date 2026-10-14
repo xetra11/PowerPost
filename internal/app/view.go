@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
+	"powerposter/internal/media"
 	"powerposter/internal/platform"
 	"powerposter/internal/store"
 )
@@ -41,7 +43,8 @@ type TargetView struct {
 	FinalCaption  string                     `json:"finalCaption"`
 	CaptionLength int                        `json:"captionLength"`
 	CaptionMax    int                        `json:"captionMax"`
-	Rendition     *RenditionView             `json:"rendition"`
+	Rendition     *RenditionView             `json:"rendition"`  // the video, or the first image
+	Renditions    []RenditionView            `json:"renditions"` // one per post media, in order
 	Issues        []platform.ValidationIssue `json:"issues"`
 	Notices       []string                   `json:"notices"`
 	CanPublish    bool                       `json:"canPublish"` // this platform can be published now
@@ -51,7 +54,8 @@ type TargetView struct {
 type PostView struct {
 	store.Post
 	Project       ProjectRef                 `json:"project"`
-	Asset         *AssetView                 `json:"asset"`
+	Asset         *AssetView                 `json:"asset"`         // the video, or the first image
+	Assets        []AssetView                `json:"assets"`        // all media in order (images of a carousel)
 	CoverURL      string                     `json:"coverUrl"`      // cover preview (video frame or custom image)
 	CoverFrameURL string                     `json:"coverFrameUrl"` // video frame at coverMs
 	Targets       []TargetView               `json:"targets"`
@@ -68,6 +72,7 @@ type PostView struct {
 func (a *App) buildView(ctx context.Context, p store.Post) (PostView, error) {
 	v := PostView{
 		Post:      p,
+		Assets:    []AssetView{},
 		Targets:   []TargetView{},
 		Issues:    []platform.ValidationIssue{},
 		EditURL:   fmt.Sprintf("%s/posts/%d", a.Cfg.BaseURL, p.ID),
@@ -78,53 +83,61 @@ func (a *App) buildView(ctx context.Context, p store.Post) (PostView, error) {
 		return v, fmt.Errorf("project of post %d: %w", p.ID, err)
 	}
 	v.Project = ProjectRef{ID: proj.ID, Slug: proj.Slug, Name: proj.Name}
-	assets, err := a.Store.ListAssets(ctx, p.ID)
+	assets, err := a.mediaAssets(ctx, p)
 	if err != nil {
 		return v, err
 	}
-	var rends []store.Rendition
-	if len(assets) > 0 {
-		as := assets[0]
-		v.Asset = &AssetView{Asset: as, URL: mediaURL("originals", as.Path), ThumbURL: mediaURL("thumbs", as.ThumbPath)}
-		if rends, err = a.Store.ListRenditions(ctx, as.ID); err != nil {
+	rends := map[int64][]store.Rendition{}
+	for _, as := range assets {
+		v.Assets = append(v.Assets, AssetView{Asset: as, URL: mediaURL("originals", as.Path), ThumbURL: mediaURL("thumbs", as.ThumbPath)})
+		if rends[as.ID], err = a.Store.ListRenditions(ctx, as.ID); err != nil {
 			return v, err
 		}
+	}
+	if len(v.Assets) > 0 {
+		v.Asset = &v.Assets[0]
 	}
 	targets, err := a.Store.ListTargets(ctx, p.ID)
 	if err != nil {
 		return v, err
 	}
 
-	allReady := true
+	allReady := len(assets) > 0
 	anyEnabled := false
 	for _, t := range targets {
 		ad, ok := a.Registry.Get(platform.ID(t.Platform))
 		if !ok {
 			continue // platform removed from the registry
 		}
-		tv := TargetView{Target: t, DisplayName: ad.DisplayName(), Issues: []platform.ValidationIssue{}, Notices: []string{}}
+		tv := TargetView{Target: t, DisplayName: ad.DisplayName(), Renditions: []RenditionView{}, Issues: []platform.ValidationIssue{}, Notices: []string{}}
 		cons := ad.Constraints(platform.PostKind(p.Kind))
 		tv.FinalCaption = a.finalCaption(p, t)
 		tv.CaptionLength = cons.Caption.Length(tv.FinalCaption)
 		tv.CaptionMax = cons.Caption.MaxChars
-		for _, r := range rends {
-			if r.Platform == t.Platform {
-				tv.Rendition = &RenditionView{Rendition: r, URL: mediaURL("renditions", r.Path)}
-				if r.Status != "ready" {
-					tv.Rendition.URL = ""
+		for _, as := range assets {
+			for _, r := range rends[as.ID] {
+				if r.Platform == t.Platform {
+					rv := RenditionView{Rendition: r}
+					if r.Status == "ready" {
+						rv.URL = mediaURL("renditions", r.Path)
+					}
+					tv.Renditions = append(tv.Renditions, rv)
 				}
 			}
+		}
+		if len(tv.Renditions) > 0 {
+			tv.Rendition = &tv.Renditions[0]
 		}
 		if e, ok := ad.(platform.Embedder); ok && t.Status == "published" && t.Permalink != "" {
 			tv.EmbedURL = e.EmbedURL(t.Permalink, t.RemoteID)
 		}
 		if t.Enabled {
 			anyEnabled = true
-			tv.Issues = a.validateTarget(ctx, ad, p, v.Asset, tv)
+			tv.Issues = a.validateTarget(ctx, ad, p, v.Assets, tv)
 			if n := ad.ReviewNotices(t.Options); n != nil {
 				tv.Notices = n
 			}
-			if tv.Rendition == nil || tv.Rendition.Status != "ready" {
+			if !tv.converted(len(assets)) {
 				allReady = false
 			}
 			v.Issues = append(v.Issues, tv.Issues...)
@@ -164,6 +177,28 @@ func (a *App) buildView(ctx context.Context, p store.Post) (PostView, error) {
 	return v, nil
 }
 
+// converted reports whether every media file of the post is converted for this platform.
+func (t TargetView) converted(media int) bool {
+	if media == 0 || len(t.Renditions) < media {
+		return false
+	}
+	for _, r := range t.Renditions {
+		if r.Status != "ready" {
+			return false
+		}
+	}
+	return true
+}
+
+// mediaAssets returns the post's media: its video, or its images in order.
+func (a *App) mediaAssets(ctx context.Context, p store.Post) ([]store.Asset, error) {
+	assets, err := a.Store.ListAssets(ctx, p.ID)
+	if err == nil && p.Kind != string(platform.KindImage) && len(assets) > 1 {
+		assets = assets[:1]
+	}
+	return assets, err
+}
+
 func (a *App) finalCaption(p store.Post, t store.Target) string {
 	text, tags := p.Caption, p.Hashtags
 	if t.CaptionOverride != nil {
@@ -175,7 +210,7 @@ func (a *App) finalCaption(p store.Post, t store.Target) string {
 	return platform.ComposeCaption(text, tags)
 }
 
-func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.Post, asset *AssetView, tv TargetView) []platform.ValidationIssue {
+func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.Post, assets []AssetView, tv TargetView) []platform.ValidationIssue {
 	id := ad.ID()
 	issues := []platform.ValidationIssue{}
 	add := func(sev platform.Severity, scope platform.Scope, code, msg, fix string) {
@@ -203,9 +238,12 @@ func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.P
 
 	// Media
 	switch {
-	case asset == nil:
-		add(platform.SeverityError, platform.ScopeContent, "NO_MEDIA", "Add a video.", "")
+	case len(assets) == 0:
+		add(platform.SeverityError, platform.ScopeContent, "NO_MEDIA", "Add a video or images.", "")
+	case p.Kind == string(platform.KindImage) && cons.Image != nil:
+		a.validateImages(add, ad, *cons.Image, assets, tv)
 	case cons.Video != nil:
+		asset := assets[0]
 		for _, v := range cons.Video.DurationViolations(asset.Info) {
 			add(platform.SeverityError, platform.ScopeContent, v.Code, v.Message, "")
 		}
@@ -244,12 +282,55 @@ func (a *App) validateTarget(ctx context.Context, ad platform.Adapter, p store.P
 	return issues
 }
 
+type addIssue func(sev platform.Severity, scope platform.Scope, code, msg, fix string)
+
+// validateImages checks the images of an image post for one platform.
+func (a *App) validateImages(add addIssue, ad platform.Adapter, c media.ImageConstraints, assets []AssetView, tv TargetView) {
+	if c.MaxCount > 0 && len(assets) > c.MaxCount {
+		add(platform.SeverityError, platform.ScopeContent, "TOO_MANY_IMAGES", fmt.Sprintf("%s takes at most %d images per post; this one has %d.", ad.DisplayName(), c.MaxCount, len(assets)), "")
+	}
+	if c.NeedsPublicURL && a.Cfg.PublicBaseURL == "" {
+		add(platform.SeverityError, platform.ScopeAccount, "NEEDS_TUNNEL", fmt.Sprintf("%s downloads images from a public link: set up the tunnel (NGROK_DOMAIN or PUBLIC_BASE_URL, see README → Tunnel) to publish image posts.", ad.DisplayName()), "")
+	}
+	converting := 0
+	for i, as := range assets {
+		label := ""
+		if len(assets) > 1 {
+			label = fmt.Sprintf("Image %d: ", i+1)
+		}
+		ri := slices.IndexFunc(tv.Renditions, func(r RenditionView) bool { return r.AssetID == as.ID })
+		switch {
+		case ri < 0 || tv.Renditions[ri].Status == "pending" || tv.Renditions[ri].Status == "processing":
+			converting++
+		case tv.Renditions[ri].Status == "failed":
+			add(platform.SeverityError, platform.ScopeContent, "CONVERSION_FAILED", label+"Conversion failed: "+tv.Renditions[ri].Error, "")
+		case tv.Renditions[ri].Info != nil:
+			r := tv.Renditions[ri]
+			for _, v := range c.Check(*r.Info) {
+				add(platform.SeverityError, platform.ScopeContent, v.Code, label+v.Message, "")
+			}
+			for _, fix := range r.Plan.Fixes {
+				add(platform.SeverityWarning, platform.ScopeContent, "AUTO_FIXED", "Adjusted automatically", label+fix)
+			}
+		}
+	}
+	if converting > 0 {
+		add(platform.SeverityInfo, platform.ScopeContent, "CONVERTING", fmt.Sprintf("Converting… %d of %d images done", len(assets)-converting, len(assets)), "")
+	}
+}
+
 func (a *App) resolve(p store.Post, tv TargetView) platform.ResolvedTarget {
 	rt := platform.ResolvedTarget{PostID: p.ID, Kind: platform.PostKind(p.Kind), Caption: tv.FinalCaption, Options: tv.Options, CoverMs: p.CoverMs}
 	if p.CoverCustom {
 		rt.CoverImagePath = p.CoverPath
 	}
-	if tv.Rendition != nil {
+	if rt.Kind == platform.KindImage {
+		for _, r := range tv.Renditions {
+			if r.Status == "ready" && r.Info != nil {
+				rt.Images = append(rt.Images, platform.File{Path: r.Path, Info: *r.Info})
+			}
+		}
+	} else if tv.Rendition != nil {
 		rt.FilePath = tv.Rendition.Path
 		if tv.Rendition.Info != nil {
 			rt.File = *tv.Rendition.Info
@@ -272,10 +353,13 @@ func contentHash(p store.Post, targets []TargetView) string {
 		if !t.Enabled {
 			continue
 		}
-		file := ""
-		if t.Rendition != nil && t.Rendition.Status == "ready" {
-			file = t.Rendition.Checksum
+		var files []string
+		for _, r := range t.Renditions {
+			if r.Status == "ready" {
+				files = append(files, r.Checksum)
+			}
 		}
+		file := strings.Join(files, ",") // a single video hashes as before
 		parts = append(parts, part{t.Platform, t.FinalCaption, canonicalJSON(t.Options), file})
 	}
 	slices.SortFunc(parts, func(x, y part) int {

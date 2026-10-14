@@ -5,6 +5,7 @@ export type PreviewMode = 'live' | 'simulation' | 'safezones' | 'plain'
 export interface PreviewProps {
   platform: string // instagram | tiktok | other
   videoUrl: string | null // null while converting
+  images?: string[] | null // image posts: the converted images, null while converting
   placeholder: string
   caption: string
   username: string // without @
@@ -13,7 +14,7 @@ export interface PreviewProps {
 }
 
 /**
- * A phone-sized preview of the converted video. In "simulation" mode it draws an
+ * A phone-sized preview of the converted video (or images, as a swipeable carousel). In "simulation" mode it draws an
  * approximation of the Instagram Reels / TikTok feed UI on top, so you can see
  * what the caption, username and buttons cover. Not pixel-exact: both apps
  * change their layout regularly.
@@ -23,6 +24,16 @@ export function PhonePreview(p: PreviewProps) {
   const [paused, setPaused] = useState(true)
   const [muted, setMuted] = useState(true)
   const simulate = p.mode === 'simulation' && (p.platform === 'instagram' || p.platform === 'tiktok')
+
+  if (p.images) {
+    return (
+      <div className={simulate ? `phone sim sim-${p.platform}` : 'phone'}>
+        <ImageCarousel urls={p.images} />
+        {p.mode === 'safezones' && <SafeZones />}
+        {simulate && (p.platform === 'instagram' ? <InstagramOverlay {...p} /> : <TikTokOverlay {...p} />)}
+      </div>
+    )
+  }
 
   if (!p.videoUrl) {
     return (
@@ -74,11 +85,11 @@ export function PhonePreview(p: PreviewProps) {
   )
 }
 
-function InstagramOverlay({ caption, username, label }: PreviewProps) {
+function InstagramOverlay({ caption, username, label, images }: PreviewProps) {
   return (
     <div className="sim-overlay" aria-hidden>
       <div className="sim-top ig-top">
-        <strong>Reels</strong>
+        <strong>{images ? 'Posts' : 'Reels'}</strong>
         <Icon name="camera" />
       </div>
       <div className="sim-rail">
@@ -205,5 +216,34 @@ function Icon({ name }: { name: IconName }) {
     <svg viewBox="0 0 24 24" className="sim-icon" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round">
       {paths[name]}
     </svg>
+  )
+}
+
+/** Shows one image at a time with arrows and dots, like a carousel post. */
+function ImageCarousel({ urls }: { urls: string[] }) {
+  const [index, setIndex] = useState(0)
+  const i = Math.min(index, urls.length - 1)
+  return (
+    <div className="carousel">
+      <img src={urls[i]} alt={`Image ${i + 1} of ${urls.length}`} />
+      {urls.length > 1 && (
+        <>
+          <button type="button" className="carousel-nav prev" disabled={i === 0} onClick={() => setIndex(i - 1)} aria-label="Previous image">
+            ‹
+          </button>
+          <button type="button" className="carousel-nav next" disabled={i === urls.length - 1} onClick={() => setIndex(i + 1)} aria-label="Next image">
+            ›
+          </button>
+          <span className="carousel-count">
+            {i + 1}/{urls.length}
+          </span>
+          <span className="carousel-dots" aria-hidden>
+            {urls.map((u, n) => (
+              <span key={u} className={n === i ? 'active' : ''} />
+            ))}
+          </span>
+        </>
+      )}
+    </div>
   )
 }

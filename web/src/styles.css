@@ -59,6 +59,9 @@ ul.plain li { list-style: none; }
 .toolbar select { width: auto; margin: 0; }
 .thumb-cell { width: 56px; }
 .thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; display: block; }
+.thumb-cell { position: relative; }
+.thumb-count { position: absolute; right: 2px; bottom: 6px; background: rgba(0, 0, 0, 0.7); color: #fff; border-radius: 0.6rem;
+  padding: 0 0.35rem; font-size: 0.7rem; line-height: 1.3; }
 .empty-thumb { background: var(--pico-muted-border-color); }
 .empty { text-align: center; padding: 2rem; }
 
@@ -70,6 +73,13 @@ ul.plain li { list-style: none; }
   text-align: center; cursor: pointer; margin: 0.75rem 0 1rem; color: var(--pico-muted-color); }
 .dropzone:hover, .dropzone.over { border-color: var(--pico-primary); color: var(--pico-primary); }
 .dropzone progress { margin: 0.5rem 0 0; }
+.image-grid { list-style: none; padding: 0; margin: 0 0 0.75rem; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.5rem; }
+.image-grid li { list-style: none; position: relative; margin: 0; }
+.image-grid img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: var(--pico-border-radius); display: block; background: #000; }
+.image-index { position: absolute; top: 4px; left: 4px; background: rgba(0, 0, 0, 0.7); color: #fff; border-radius: 0.6rem;
+  padding: 0 0.4rem; font-size: 0.75rem; }
+.image-actions { position: absolute; bottom: 4px; left: 4px; right: 4px; display: flex; justify-content: space-between; gap: 2px; }
+.image-actions button { margin: 0; padding: 0 0.45rem; font-size: 0.8rem; line-height: 1.6; width: auto; }
 .cover-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .cover-row button { margin: 0; width: auto; }
 .counters { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--pico-muted-color); }
@@ -94,6 +104,20 @@ ul.plain li { list-style: none; }
 .phone { position: relative; width: 100%; max-width: 300px; aspect-ratio: 9 / 16; margin: 0 auto 0.5rem; background: #000;
   border-radius: 18px; overflow: hidden; border: 6px solid #222; }
 .phone video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.carousel { position: relative; width: 100%; height: 100%; }
+.carousel img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.carousel-nav { position: absolute; z-index: 2; top: 50%; transform: translateY(-50%); width: 2rem; height: 2rem; padding: 0; margin: 0;
+  border: none; border-radius: 50%; background: rgba(255, 255, 255, 0.8); color: #000; font-size: 1.3rem; line-height: 1; }
+.carousel-nav:disabled { display: none; }
+.carousel-nav.prev { left: 0.4rem; }
+.carousel-nav.next { right: 0.4rem; }
+.carousel-count { position: absolute; z-index: 2; top: 0.6rem; right: 0.6rem; background: rgba(0, 0, 0, 0.6); color: #fff;
+  border-radius: 1rem; padding: 0.05rem 0.5rem; font-size: 0.75rem; }
+.sim .carousel-count { top: 13%; }
+.carousel-dots { position: absolute; z-index: 2; left: 0; right: 0; bottom: 0.5rem; display: flex; justify-content: center; gap: 4px; }
+.sim .carousel-dots { bottom: 30%; }
+.carousel-dots span { width: 6px; height: 6px; border-radius: 50%; background: rgba(255, 255, 255, 0.45); }
+.carousel-dots span.active { background: #fff; }
 .phone-placeholder { color: #aaa; display: grid; place-items: center; height: 100%; font-size: 0.9rem; }
 .safe-zones > div { position: absolute; background: rgba(255, 60, 60, 0.28); pointer-events: none; }
 .sz-top { top: 0; left: 0; right: 0; height: 9%; }

@@ -23,12 +23,14 @@ export function targetSummary(t: Target): { icon: string; text: string; tone: 'o
   if (t.status === 'queued' || t.status === 'publishing') return { icon: '↻', text: t.stage || 'Publishing', tone: 'busy' }
   if (t.status === 'failed') return { icon: '✗', text: 'Publish failed', tone: 'error' }
   if (t.status === 'removed') return { icon: '!', text: 'Removed on platform', tone: 'warn' }
-  const r = t.rendition
-  if (r && (r.status === 'pending' || r.status === 'processing')) return { icon: '↻', text: `Converting ${Math.round(r.progress * 100)}%`, tone: 'busy' }
+  const busy = t.renditions.filter((r) => r.status === 'pending' || r.status === 'processing')
+  if (busy.length === 1 && t.renditions.length === 1)
+    return { icon: '↻', text: `Converting ${Math.round(busy[0].progress * 100)}%`, tone: 'busy' }
+  if (busy.length) return { icon: '↻', text: `Converting ${t.renditions.length - busy.length}/${t.renditions.length}`, tone: 'busy' }
   const errors = t.issues.filter((i) => i.severity === 'error')
   if (errors.some((i) => i.scope === 'content')) return { icon: '✗', text: `${errors.length} to fix`, tone: 'error' }
   if (errors.length) return { icon: '!', text: 'Account not ready', tone: 'warn' }
-  if (!r) return { icon: '·', text: 'No video', tone: 'warn' }
+  if (!t.rendition) return { icon: '·', text: 'No media', tone: 'warn' }
   return { icon: '✓', text: 'Ready', tone: 'ok' }
 }
 

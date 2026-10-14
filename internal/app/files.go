@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -104,6 +105,22 @@ func (a *App) PublicMediaURL(path string, ttl time.Duration) (string, bool) {
 	}
 	payload := fmt.Sprintf("%s.%d", filepath.Base(path), time.Now().Add(ttl).Unix())
 	return a.Cfg.PublicBaseURL + "/public-media/" + payload + "." + a.Box.Sign(payload), true
+}
+
+var verificationRe = regexp.MustCompile(`^tiktok[A-Za-z0-9_-]+\.txt$`)
+
+// VerificationFile returns a TikTok signature file (tiktok….txt) from the
+// inbox. TikTok pulls photos only from verified URL prefixes; serving the
+// file at the tunnel's root verifies it. Nothing else in the inbox is public.
+func (a *App) VerificationFile(name string) (string, bool) {
+	if !verificationRe.MatchString(name) {
+		return "", false
+	}
+	p := filepath.Join(a.Cfg.InboxDir, name)
+	if st, err := os.Stat(p); err != nil || !st.Mode().IsRegular() {
+		return "", false
+	}
+	return p, true
 }
 
 // ResolvePublicMedia checks a public media token and returns the file to serve.

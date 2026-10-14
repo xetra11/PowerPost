@@ -257,7 +257,8 @@ func describeBlocking(v PostView, scope platform.Scope) string {
 		msgs = append(msgs, prefix+i.Message)
 	}
 	for _, t := range v.Targets {
-		if t.Enabled && (t.Rendition == nil || t.Rendition.Status != "ready") && (t.Rendition == nil || t.Rendition.Status != "failed") {
+		if t.Enabled && len(v.Assets) > 0 && !t.converted(len(v.Assets)) &&
+			!slices.ContainsFunc(t.Renditions, func(r RenditionView) bool { return r.Status == "failed" }) {
 			msgs = append(msgs, t.Platform+": conversion still running")
 		}
 	}
