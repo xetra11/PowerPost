@@ -299,6 +299,7 @@ function ReviewCard({
                   : 'No media'
         }
         caption={t.finalCaption}
+        title={t.platform === 'youtube' ? shortsTitle(t) : undefined}
         username={handle ?? platform?.accountName ?? ''}
         label={disclosureLabel(t)}
         mode={mode === 'live' ? 'simulation' : mode}
@@ -384,6 +385,15 @@ function ReviewCard({
       ))}
     </article>
   )
+}
+
+/** The YouTube title as the server sends it: the "title" option, or the caption's first line cut to 100 characters. */
+function shortsTitle(t: Target): string {
+  const own = typeof t.options.title === 'string' ? t.options.title.trim() : ''
+  if (own) return own
+  const line = t.finalCaption.split('\n').map((l) => l.trim()).find((l) => l) ?? ''
+  const chars = [...line]
+  return chars.length > 100 ? chars.slice(0, 99).join('').trim() + '…' : line
 }
 
 /** The label TikTok puts on commercial posts (shown in the simulated preview). */

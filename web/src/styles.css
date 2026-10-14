@@ -229,6 +229,16 @@ dl.options dd { margin: 0; text-align: right; }
 .sim-play .sim-icon { width: 9cqw; height: 9cqw; }
 .sim-mute { top: 11%; right: 3cqw; width: 9cqw; height: 9cqw; }
 .sim-mute .sim-icon { width: 5cqw; height: 5cqw; }
+.yt-top { justify-content: flex-end; gap: 5cqw; }
+.yt-rail { bottom: 12%; gap: 5cqw; }
+.yt-sound-thumb { width: 8.5cqw; height: 8.5cqw; border-radius: 1.5cqw; border: 0.5cqw solid #fff; background: linear-gradient(135deg, #1095c1, #0b5f86); }
+.yt-bottom { bottom: 11%; }
+.yt-bottom .sim-user strong { font-size: 4cqw; }
+.yt-subscribe { background: #fff; color: #0f0f0f; border-radius: 5cqw; padding: 1cqw 3cqw; font-size: 3.4cqw; font-weight: 600; text-shadow: none; }
+.yt-bottom .sim-caption { font-size: 4.2cqw; }
+.yt-nav { font-size: 2.8cqw; background: #0f0f0f; }
+.yt-create { width: 9cqw; height: 9cqw; border-radius: 50%; background: rgba(255, 255, 255, 0.15); display: grid; place-items: center;
+  font-size: 6cqw; font-weight: 300; line-height: 1; }
 @media (prefers-reduced-motion: reduce) { .tt-disc, .marquee { animation: none; } }
 .card-publish { margin: 0.75rem 0; }
 .card-publish button { width: 100%; margin: 0; }

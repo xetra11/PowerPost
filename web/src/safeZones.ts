@@ -32,9 +32,9 @@ export interface Zone {
 /**
  * Areas covered by the app's UI. Approximations of the platforms' published
  * guides (Meta: keep the top 14 % and bottom 35 % of a Reel free; TikTok: about
- * 130 px top, 480 px bottom and 140 px right of 1080x1920); YouTube Shorts: about 8 %
- * top, 30 % bottom and 15 % right). Both apps change
- * their layout regularly, so leave some margin.
+ * 130 px top, 480 px bottom and 140 px right of 1080x1920); YouTube Shorts: Google's
+ * margins for vertical ads, 288 px top, 672 px bottom and 192 px right). The
+ * apps change their layout regularly, so leave some margin.
  *
  * For "feed" the zones are on the image: Instagram's profile grid shows a 3:4
  * crop of it, and carousels have a counter in the top right corner.
@@ -62,9 +62,9 @@ export function safeZones(surface: Surface, opts: { aspect?: number; carousel?: 
       ]
     case 'shorts':
       return [
-        { top: 0, left: 0, width: 100, height: 8, label: 'Search & menu' },
-        { top: 70, left: 0, width: 100, height: 30, label: 'Title, channel & sound' },
-        { top: 38, left: 85, width: 15, height: 32, label: 'Buttons' },
+        { top: 0, left: 0, width: 100, height: 15, label: 'Search & menu' },
+        { top: 65, left: 0, width: 100, height: 35, label: 'Channel, title & sound' },
+        { top: 15, left: 90, width: 10, height: 50, label: 'Buttons' },
       ]
     case 'feed': {
       const zones: Zone[] = []

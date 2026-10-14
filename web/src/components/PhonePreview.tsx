@@ -10,11 +10,12 @@ export interface PreviewImage {
 }
 
 export interface PreviewProps {
-  platform: string // instagram | tiktok | other
+  platform: string // instagram | tiktok | youtube | other
   videoUrl: string | null // null while converting
   images?: PreviewImage[] | null // image posts: the converted images, null while converting
   placeholder: string
   caption: string
+  title?: string // YouTube Shorts show the video title, not the caption
   username: string // without @
   label?: string // e.g. "Promotional content"
   mode: PreviewMode
@@ -22,7 +23,7 @@ export interface PreviewProps {
 
 /**
  * A phone-sized preview of the converted video (or images, as a swipeable carousel). In "simulation" mode it draws an
- * approximation of the app around it: the Reels / TikTok feed UI on top of
+ * approximation of the app around it: the Reels / TikTok / Shorts feed UI on top of
  * videos and TikTok photos, the Instagram feed around image posts. Not
  * pixel-exact: the apps change their layout regularly.
  */
@@ -30,7 +31,7 @@ export function PhonePreview(p: PreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [paused, setPaused] = useState(true)
   const [muted, setMuted] = useState(true)
-  const simulate = p.mode === 'simulation' && (p.platform === 'instagram' || p.platform === 'tiktok')
+  const simulate = p.mode === 'simulation' && (p.platform === 'instagram' || p.platform === 'tiktok' || p.platform === 'youtube')
 
   if (p.images) {
     const surface = surfaceOf(p.platform, 'image')
@@ -93,7 +94,7 @@ export function PhonePreview(p: PreviewProps) {
       <button type="button" className="sim-mute" onClick={() => setMuted(!muted)} aria-label={muted ? 'Unmute' : 'Mute'}>
         <Icon name={muted ? 'muted' : 'sound'} />
       </button>
-      {p.platform === 'instagram' ? <InstagramOverlay {...p} /> : <TikTokOverlay {...p} />}
+      {p.platform === 'instagram' ? <InstagramOverlay {...p} /> : p.platform === 'youtube' ? <ShortsOverlay {...p} /> : <TikTokOverlay {...p} />}
     </div>
   )
 }
@@ -161,6 +162,45 @@ function TikTokOverlay({ caption, username, label }: PreviewProps) {
         <span className="tt-create">+</span>
         <span>Inbox</span>
         <span>Profile</span>
+      </div>
+    </div>
+  )
+}
+
+/** YouTube Shorts: channel, title and sound at the bottom, buttons on the right. The description isn't shown in the feed. */
+function ShortsOverlay({ title, username }: PreviewProps) {
+  const handle = (username || 'your_channel').replace(/\s+/g, '')
+  return (
+    <div className="sim-overlay" aria-hidden>
+      <div className="sim-top yt-top">
+        <Icon name="search" />
+        <Icon name="dots" />
+      </div>
+      <div className="sim-rail yt-rail">
+        <RailItem icon="like" text="1.2K" />
+        <RailItem icon="dislike" text="Dislike" />
+        <RailItem icon="comment" text="48" />
+        <RailItem icon="share" text="Share" />
+        <RailItem icon="remix" text="Remix" />
+        <span className="yt-sound-thumb" />
+      </div>
+      <div className="sim-bottom yt-bottom">
+        <div className="sim-user">
+          <span className="avatar" />
+          <strong>@{handle}</strong>
+          <span className="yt-subscribe">Subscribe</span>
+        </div>
+        {title && <Caption text={title} />}
+        <div className="sim-music">
+          <Icon name="music" /> <span className="marquee">Original sound · {username || 'your_channel'}</span>
+        </div>
+      </div>
+      <div className="tt-nav yt-nav">
+        <span>Home</span>
+        <span>Shorts</span>
+        <span className="yt-create">+</span>
+        <span>Subscriptions</span>
+        <span>You</span>
       </div>
     </div>
   )
@@ -282,6 +322,9 @@ type IconName =
   | 'home'
   | 'plus'
   | 'reels'
+  | 'like'
+  | 'dislike'
+  | 'remix'
 
 /** Generic line icons (not the platforms' own artwork). */
 function Icon({ name }: { name: IconName }) {
@@ -307,6 +350,9 @@ function Icon({ name }: { name: IconName }) {
     home: <path d="M4 11l8-7 8 7v9h-5v-6H9v6H4v-9z" />,
     plus: <path d="M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm7 4v8m-4-4h8" />,
     reels: <path d="M4 4h16v16H4V4zm0 5h16M9 4l2 5m3-5l2 5m-6 3v5l4-2.5-4-2.5z" />,
+    like: <path d="M7 10v10H4V10h3zm0 0l4-7c1.5 0 2.5 1 2 3l-1 4h6a2 2 0 0 1 2 2.3l-1.2 6A2 2 0 0 1 16.8 20H7" />,
+    dislike: <path d="M7 14V4H4v10h3zm0 0l4 7c1.5 0 2.5-1 2-3l-1-4h6a2 2 0 0 0 2-2.3l-1.2-6A2 2 0 0 0 16.8 4H7" />,
+    remix: <path d="M4 7h11l-3-3m3 3l-3 3M20 17H9l3 3m-3-3l3-3" />,
   }
   const filled = name === 'play' || name === 'dots'
   return (
