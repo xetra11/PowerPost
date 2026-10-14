@@ -523,7 +523,11 @@ func (s *Server) verificationFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	ct := "text/plain; charset=utf-8"
+	if strings.HasSuffix(p, ".html") {
+		ct = "text/html; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", ct)
 	http.ServeFile(w, r, p)
 }
 

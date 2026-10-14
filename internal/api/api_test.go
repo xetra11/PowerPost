@@ -209,7 +209,7 @@ func TestPublicInfoPages(t *testing.T) {
 	}
 }
 
-func TestTikTokVerificationFile(t *testing.T) {
+func TestVerificationFile(t *testing.T) {
 	s, private := newServer(t)
 	pub := s.PublicHandler()
 	verify := filepath.Join(s.App.Cfg.InboxDir, "verify")
@@ -218,7 +218,9 @@ func TestTikTokVerificationFile(t *testing.T) {
 	}
 	files := map[string]string{
 		filepath.Join(verify, "tiktokAbC123.txt"):       "tiktok-developers-site-verification=x",
+		filepath.Join(verify, "google0123abcd.html"):    "google-site-verification: google0123abcd.html",
 		filepath.Join(verify, "notes.md"):               "no",
+		filepath.Join(verify, "page.html"):              "no",
 		filepath.Join(s.App.Cfg.InboxDir, "secret.txt"): "no",
 		filepath.Join(s.App.Cfg.InboxDir, "clip.mp4"):   "no",
 	}
@@ -230,8 +232,12 @@ func TestTikTokVerificationFile(t *testing.T) {
 	if rec := do(pub, "GET", "/tiktokAbC123.txt", nil, nil); rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), "tiktok-developers") {
 		t.Fatalf("signature file: %d %q", rec.Code, rec.Body)
 	}
-	// Only .txt files from inbox/verify are public.
-	for _, p := range []string{"/secret.txt", "/clip.mp4", "/notes.md", "/missing.txt", "/..txt", "/verify/tiktokAbC123.txt"} {
+	rec := do(pub, "GET", "/google0123abcd.html", nil, nil)
+	if rec.Code != 200 || !strings.HasPrefix(rec.Body.String(), "google-site-verification") || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/html") {
+		t.Fatalf("google file: %d %q %s", rec.Code, rec.Body, rec.Header().Get("Content-Type"))
+	}
+	// Only .txt files and google*.html from inbox/verify are public.
+	for _, p := range []string{"/secret.txt", "/clip.mp4", "/notes.md", "/page.html", "/missing.txt", "/..txt", "/verify/tiktokAbC123.txt"} {
 		if rec := do(pub, "GET", p, nil, nil); rec.Code != 404 {
 			t.Errorf("public %s: %d", p, rec.Code)
 		}

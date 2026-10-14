@@ -259,7 +259,7 @@ Things to know about TikTok:
 - **Music:** neither TikTok nor Instagram offers licensed sounds through their API, so bake the music into the video.
 - **Photo posts:** TikTok only downloads photos from a public link whose URL you verified, so they need the tunnel plus a one-time verification of the tunnel address:
   1. In the developer portal open your app → *Verify properties* (*URL properties*) → **URL prefix**, and enter the tunnel address with a trailing slash, e.g. `https://name.ngrok-free.dev/`. A free ngrok domain can only be verified this way (there is no DNS access).
-  2. Download the signature file TikTok offers and save it into the `verify` folder inside the inbox (`inbox/verify/`). PowerPoster serves `.txt` files from that folder, and nothing else from the inbox, at the root of the tunnel.
+  2. Download the signature file TikTok offers and save it into the `verify` folder inside the inbox (`inbox/verify/`). PowerPoster serves `.txt` files (and Google Search Console's `google<hash>.html`) from that folder, and nothing else from the inbox, at the root of the tunnel.
   3. Click *Verify*. The publish error names the exact prefix TikTok expects.
 
   The caption is sent as the photo description (up to 4000 characters), also in inbox mode. *Add recommended music* lets TikTok pick a sound for direct photo posts.
