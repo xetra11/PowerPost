@@ -77,6 +77,9 @@ func (a *Adapter) Auth() platform.Authenticator { return a }
 // The API accepts up to 4096 px, but TikTok re-encodes to ≤1080p anyway, so we
 // convert to 1080x1920 ourselves: smaller uploads and we control the quality.
 // Photo posts take JPEG/WebP up to 1080p, pulled from a public link.
+// TikTok allows at most five hashtags per post.
+const maxHashtags = 5
+
 func (a *Adapter) Constraints(kind platform.PostKind) platform.Constraints {
 	if kind == platform.KindImage {
 		return platform.Constraints{
@@ -88,7 +91,7 @@ func (a *Adapter) Constraints(kind platform.PostKind) platform.Constraints {
 				MaxCount:       35,
 				NeedsPublicURL: true, // photos are only accepted as PULL_FROM_URL
 			},
-			Caption: platform.CaptionRules{MaxChars: 4000, CountUTF16: true}, // photo description
+			Caption: platform.CaptionRules{MaxChars: 4000, CountUTF16: true, MaxHashtags: maxHashtags}, // photo description
 		}
 	}
 	return platform.Constraints{
@@ -106,7 +109,7 @@ func (a *Adapter) Constraints(kind platform.PostKind) platform.Constraints {
 			DurationMax:  10 * 60, // the per-creator limit is checked at publish time
 			MaxBytes:     4 << 30,
 		},
-		Caption: platform.CaptionRules{MaxChars: 2200, CountUTF16: true},
+		Caption: platform.CaptionRules{MaxChars: 2200, CountUTF16: true, MaxHashtags: maxHashtags},
 	}
 }
 

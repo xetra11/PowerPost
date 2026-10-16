@@ -4,6 +4,7 @@ import {
   api,
   captionLength,
   composeCaption,
+  countHashtags,
   describeMedia,
   isConverting,
   parseHashtags,
@@ -160,6 +161,13 @@ export default function EditorPage() {
   }
 
   const baseTags = parseHashtags(draft.hashtags)
+  const hashtagLimits = post.targets
+    .filter((t) => t.enabled)
+    .flatMap((t) => {
+      const max = platformOf(t)?.constraints.caption.maxHashtags
+      return max ? [{ name: t.displayName, max }] : []
+    })
+    .sort((a, b) => a.max - b.max)
 
   return (
     <>
@@ -315,7 +323,10 @@ export default function EditorPage() {
           <label>
             Hashtags
             <input value={draft.hashtags} disabled={!editable} placeholder="indiegame gamedev" onChange={(e) => edit({ hashtags: e.target.value })} />
-            <small className="hint">Separate with spaces. They're added to the end of the caption unless already in it.</small>
+            <small className="hint">
+              Separate with spaces. They're added to the end of the caption unless already in it.
+              {hashtagLimits.length > 0 && ` Hashtag limits (caption included): ${hashtagLimits.map((l) => `${l.name} max ${l.max}`).join(', ')}.`}
+            </small>
           </label>
           <div className="counters">
             {post.targets
@@ -327,9 +338,14 @@ export default function EditorPage() {
                 const text = composeCaption(o?.caption ?? draft.caption, o?.hashtags != null ? parseHashtags(o.hashtags) : baseTags)
                 const n = captionLength(text, p.constraints.caption.countUtf16)
                 const max = p.constraints.caption.maxChars
+                const maxTags = p.constraints.caption.maxHashtags
+                const tags = countHashtags(text)
                 return (
-                  <span key={t.platform} className={n > max ? 'over' : ''}>
-                    {t.displayName}: {n}/{max}
+                  <span key={t.platform}>
+                    <span className={n > max ? 'over' : ''}>
+                      {t.displayName}: {n}/{max}
+                    </span>
+                    {maxTags ? <span className={tags > maxTags ? 'over' : ''}> · {tags}/{maxTags} #</span> : null}
                   </span>
                 )
               })}
@@ -397,6 +413,7 @@ export default function EditorPage() {
                       onChange={(e) => editOverride(t.platform, { hashtags: e.target.checked ? draft.hashtags : null })}
                     />
                     Different hashtags for {t.displayName}
+                    {p?.constraints.caption.maxHashtags ? <small className="muted"> (max {p.constraints.caption.maxHashtags})</small> : null}
                   </label>
                   {o.hashtags !== null && (
                     <input value={o.hashtags} disabled={!editable} onChange={(e) => editOverride(t.platform, { hashtags: e.target.value })} />

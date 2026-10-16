@@ -82,7 +82,8 @@ ul.plain li { list-style: none; }
 .image-actions button { margin: 0; padding: 0 0.45rem; font-size: 0.8rem; line-height: 1.6; width: auto; }
 .cover-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .cover-row button { margin: 0; width: auto; }
-.counters { display: flex; gap: 1rem; font-size: 0.85rem; color: var(--pico-muted-color); }
+.counters { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; font-size: 0.85rem; color: var(--pico-muted-color); }
+.counters > span { white-space: nowrap; }
 .counters .over { color: var(--pp-error); font-weight: 600; }
 .platform-card.disabled { opacity: 0.7; }
 .platform-card.disabled > header { margin-bottom: calc(var(--pico-block-spacing-vertical) * -1); border-bottom: none; }

@@ -158,7 +158,7 @@ export interface Platform {
   canImportToken: boolean
   tokenPrompt: { label: string; help: string; only: boolean } | null
   supportedKinds: PostKind[]
-  constraints: { caption: { maxChars: number; countUtf16: boolean }; video?: { targetWidth: number; targetHeight: number } } // for video posts
+  constraints: { caption: { maxChars: number; countUtf16: boolean; maxHashtags?: number }; video?: { targetWidth: number; targetHeight: number } } // for video posts
   imageConstraints: { aspectMin?: number; aspectMax?: number; sameAspect?: boolean; maxWidth: number; maxHeight: number } | null
   optionsSchema: { properties: Record<string, SchemaProp> }
 }
@@ -361,6 +361,11 @@ export function composeCaption(text: string, tags: string[]): string {
   }
   if (add.length === 0) return body
   return body ? `${body}\n\n${add.join(' ')}` : add.join(' ')
+}
+
+/** Mirrors the hashtag count in platform.CaptionRules.Check on the server. */
+export function countHashtags(s: string): number {
+  return s.match(/(?:^|\s)#[\p{L}\p{N}_]+/gu)?.length ?? 0
 }
 
 export function captionLength(s: string, utf16: boolean): number {

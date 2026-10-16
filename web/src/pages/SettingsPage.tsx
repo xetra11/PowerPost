@@ -361,6 +361,17 @@ function ProjectSettingsForm({ project, onSaved, onError }: { project: Project; 
           <label>
             Default hashtags
             <input value={hashtags} placeholder="indiegame gamedev" onChange={(e) => setHashtags(e.target.value)} />
+            {platforms?.some((p) => p.constraints.caption.maxHashtags) && (
+              <small className="hint">
+                Hashtag limits per post:{' '}
+                {platforms
+                  .filter((p) => p.constraints.caption.maxHashtags)
+                  .sort((a, b) => a.constraints.caption.maxHashtags! - b.constraints.caption.maxHashtags!)
+                  .map((p) => `${p.displayName} max ${p.constraints.caption.maxHashtags}`)
+                  .join(', ')}
+                .
+              </small>
+            )}
           </label>
           <label>
             Tone notes
