@@ -4,6 +4,7 @@ Write **one post** with a video or images, let PowerPoster convert it for every 
 
 - **One post, many platforms** — shared caption and hashtags, with per-platform overrides and options.
 - **Projects** — one per game or brand, each with its own brand profile, defaults for new posts and platform accounts. Switch projects in the header.
+- **Platform rules built in** — caption length, hashtag and mention limits (e.g. Instagram 30 hashtags, TikTok 5, YouTube 60) and each platform's required settings are checked before you can approve.
 - **Automatic conversion** — 4K/120 fps gameplay becomes 1080×1920 H.264 at ≤60 fps with a blurred background, crop, or black bars. Platforms that need the same file share one encode.
 - **Image posts** — one image, or several as a carousel. Each image is converted to the format and aspect ratio every platform accepts (e.g. JPEG between 4:5 and 1.91:1 for Instagram), PNGs stay lossless where the platform takes them.
 - **Draft → Review → Publish** — approval is tied to the exact content. Change anything afterwards and the post goes back to draft.
@@ -89,7 +90,7 @@ go test ./...
 npm --prefix web run typecheck
 ```
 
-The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip those tests otherwise. Instagram, TikTok and MCP are tested against local fake servers.
+The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip those tests otherwise. Instagram, TikTok, YouTube, Discord and MCP are tested against local fake servers.
 
 ---
 
@@ -101,7 +102,7 @@ The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip thos
    └──────────── any change after approval ───┘          └──► Failed → Retry
 ```
 
-1. **Create a post.** Write the caption and hashtags, then pick the platforms.
+1. **Create a post.** Write the caption and hashtags, then pick the platforms. The editor shows each platform's caption and hashtag limits (e.g. at most 5 hashtags on TikTok).
 2. **Add a video or images.** A post has either one video or images; adding a video replaces images and the other way round. It's converted for each platform right away:
 
    | Video problem | What PowerPoster does |
@@ -127,12 +128,12 @@ The Go tests run real FFmpeg conversions when FFmpeg is installed, and skip thos
 
    Images outside a platform's aspect ratio are fitted with the same choice as videos: blurred background (default), crop, or black bars. The first image is the one shown first, so put the strongest one first.
 
-   **Framing & safe zones.** Below the media, you can place the video (or each image) by hand for every platform: drag it, zoom with the slider or mouse wheel, with that platform's safe zones drawn on top (Reels and TikTok cover different areas, TikTok photos more than videos). Images can also get another format per platform, e.g. 9:16 for a full-screen TikTok photo. "Apply to all platforms" uses the same framing everywhere; "Back to automatic" drops it. Framing re-converts only the affected platform.
+   **Framing & safe zones.** Below the media, you can place the video (or each image) by hand for every platform: drag it, zoom with the slider or mouse wheel, with that platform's safe zones drawn on top (Reels, TikTok and YouTube Shorts cover different areas, TikTok photos more than videos). Images can also get another format per platform, e.g. 9:16 for a full-screen TikTok photo. "Apply to all platforms" uses the same framing everywhere; "Back to automatic" drops it. Framing re-converts only the affected platform.
 
 3. **Pick a cover** (videos only). Choose a frame of the video (used by Instagram and TikTok), or upload an image. Instagram uses the image (needs the tunnel); TikTok's API only accepts a video frame; YouTube picks the Shorts thumbnail itself. Image posts have no separate cover: the first image is it.
-4. **Review.** Phone-sized previews play the converted files (image posts as a swipeable carousel) inside an approximation of each app: Reels and TikTok UI on top of videos and TikTok photos, the Instagram feed around image posts. The safe-zone mode shows each platform's covered areas (for Instagram image posts: the 3:4 crop of the profile grid). You see the final caption for each platform, every automatic fix, and any remaining problems.
+4. **Review.** Phone-sized previews play the converted files (image posts as a swipeable carousel) inside an approximation of each app: Reels, TikTok and YouTube Shorts UI on top of videos and TikTok photos, the Instagram feed around image posts. The safe-zone mode shows each platform's covered areas (for Instagram image posts: the 3:4 crop of the profile grid). You see the final caption for each platform, every automatic fix, and any remaining problems.
 5. **Approve.** This locks in the content. Any change afterwards (caption, options, video, images or their order) sends the post back to draft. The internal title doesn't count.
-6. **Publish** each platform on its own card, or all at once. Uploads run in the background. Each platform shows its progress, the link to the live post, or an error with a **Retry** button. If you delete an Instagram post in the app, the review page notices it (status *Removed*); you can then edit the post and publish it again.
+6. **Publish** each platform on its own card, or all at once. Uploads run in the background. Each platform shows its progress, the link to the live post, or an error with a **Retry** button. Once a post is live, the review page shows its likes, comments and views, and its *Live* mode embeds the real post (Instagram, public TikTok posts, YouTube). If you delete a post on the platform, the review page notices it (status *Removed*); you can then edit the post and publish it again.
 
 ---
 
@@ -142,9 +143,9 @@ Each game or brand is a **project**. Every post belongs to one project, and each
 
 - **Brand profile** (game name, link, default hashtags, tone notes) that Claude uses for captions,
 - **defaults for new posts** (platforms, how video is fitted to 9:16),
-- **platform accounts**: connect a different Instagram and TikTok account per project.
+- **platform accounts**: connect a different Instagram account, TikTok account, YouTube channel and Discord channel per project.
 
-Pick the project in the header; the post list and *Settings → Project* follow it. Add, rename or delete (empty) projects under *Settings → Projects*. App credentials in `.env` (Meta app, TikTok app) are shared by all projects: add each project's Instagram account as a tester of the same Meta app, and each TikTok account as a target user of the same TikTok app.
+Pick the project in the header; the post list and *Settings → Project* follow it. Add, rename or delete (empty) projects under *Settings → Projects*. App credentials in `.env` (Meta app, TikTok app, Google OAuth client) are shared by all projects: add each project's Instagram account as a tester of the same Meta app, and each TikTok account as a target user of the same TikTok app.
 
 When connecting the account of a second project, sign out of the first account on the platform's website (or use a private window) first, otherwise the platform signs you straight back in with the old account.
 
@@ -256,6 +257,7 @@ Things to know about TikTok:
   - **Inbox** (the default): the video goes to your TikTok inbox and you add the caption and post it in the TikTok app. TikTok doesn't accept a caption for inbox uploads, so the review page has a *Copy caption* button.
   - **Direct**: posts right away. Until TikTok audits your app, direct posts are **private** (and need a private account). Apply for the audit in the developer portal to post publicly.
 - **Required settings:** TikTok requires an explicit visibility choice (there is no default), the comment/Duet/Stitch toggles, and a commercial-content disclosure. Ads for your own game count as *"Your brand"*, labelled "Promotional content". The editor and review page show all of these.
+- **Hashtags:** at most 5 per post (videos and photo posts). The editor and the default hashtags under *Settings → Project* show the limit; posts with more don't pass validation.
 - **Music:** neither TikTok nor Instagram offers licensed sounds through their API, so bake the music into the video.
 - **Photo posts:** TikTok only downloads photos from a public link whose URL you verified, so they need the tunnel plus a one-time verification of the tunnel address:
   1. In the developer portal open your app → *Verify properties* (*URL properties*) → **URL prefix**, and enter the tunnel address with a trailing slash, e.g. `https://name.ngrok-free.dev/`. A free ngrok domain can only be verified this way (there is no DNS access).
@@ -337,16 +339,19 @@ All settings are environment variables, read from `.env` (native) or passed in b
 cmd/powerposter/        entry point: serve | keygen | healthcheck
 internal/
   app/                  use cases: posts, conversion, validation, approval, publishing, connections
+  config/               environment variables and .env loading
   api/                  REST API, media files, web UI, OAuth callbacks, security middleware
   mcpserver/            MCP tools and resources for Claude
   media/                ffprobe, conversion planner for videos and images, ffmpeg runner
   platform/             adapter interface, caption rules, registry
     instagram/          Instagram Reels (resumable upload), image and carousel posts
     tiktok/             TikTok Content Posting API (chunked upload, inbox/direct, photo posts)
+    youtube/            YouTube Shorts (Google OAuth, resumable upload, processing status)
     discord/            Discord channel webhook (multipart upload, several files)
   jobs/                 background job queue (stored in SQLite, survives restarts)
   store/                SQLite schema and queries
   secret/               AES-GCM token encryption
+  tunnel/               ngrok autostart for the public listener
   webui/                built UI (embedded with -tags embedui)
 web/                    React + Vite + Pico CSS
 docs/logo/              logo source images
@@ -387,4 +392,4 @@ Nothing else needs to change: the UI, the MCP tools, conversion and review pick 
 
 ## Roadmap
 
-Planned next: a history view grouped by platform, scheduling, more platforms (X, Bluesky, Threads) and metrics.
+Planned next: a history view grouped by platform, scheduling, more platforms (X, Bluesky, Threads) and metrics over time.
