@@ -14,6 +14,26 @@ Write **one post** with a video or images, let PowerPoster convert it for every 
 
 ---
 
+## Showcase
+
+**Posts** — every post of the current project with its status per platform.
+
+![Post list](docs/showcase/posts.png)
+
+**Post editor** — images or video, caption and hashtags with live limits per platform.
+
+![Post editor](docs/showcase/editor.png)
+
+**Framing & safe zones** — fine-tune the crop per platform and see what the app UI covers.
+
+![Framing and safe zones](docs/showcase/framing.png)
+
+**Review** — the live post, stats and caption side by side for every platform.
+
+![Review page](docs/showcase/review.png)
+
+---
+
 ## Quick start (Docker)
 
 You only need [Docker Desktop](https://www.docker.com/products/docker-desktop/).
